@@ -53,6 +53,10 @@ export async function saveSource(source) {
   return source;
 }
 
+export async function clearSource() {
+  await chrome.storage.session.remove(SOURCE_KEY);
+}
+
 export async function loadMemories() {
   const stored = await chrome.storage.local.get(MEMORIES_KEY);
   return cleanMemories(stored[MEMORIES_KEY]);

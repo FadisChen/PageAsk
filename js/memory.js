@@ -32,7 +32,7 @@ export async function processCompanionMemory({
       memories: next,
       additions: additions.length,
       consolidated: false,
-      warning: "鎖定記憶已超過預算；頁師傅不會自動刪除它們。",
+      warning: "鎖定記憶已超過預算；小書僮不會自動刪除它們。",
     };
   }
 

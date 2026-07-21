@@ -16,7 +16,7 @@ export const GROUNDING_FUNCTION_DECLARATION = Object.freeze({
 export function buildSystemInstruction(source) {
   const locator = source.url ? `網址：${source.url}` : `檔案類型：${source.mimeType || "文字"}`;
   const referenceText = String(source.text).replace(/<\s*\/?\s*reference\s*>/gi, "［來源邊界文字已移除］");
-  return `你是 頁師傅，一位協助使用者閱讀與理解資料的即時語音助理。
+  return `你是 小書僮，一位協助使用者閱讀與理解資料的即時語音助理。
 
 ## 回應規則
 - 一律使用臺灣繁體中文與臺灣慣用詞，語氣自然、精確，適合口語聆聽。
@@ -163,11 +163,11 @@ export async function extractMemories(apiKey, transcript, existing = [], fetchIm
   if (!Array.isArray(transcript) || !transcript.length) return [];
   const transcriptText = transcript
     .filter((line) => line && (line.role === "user" || line.role === "model") && String(line.text || "").trim())
-    .map((line) => `${line.role === "user" ? "使用者" : "頁師傅"}：${String(line.text).trim()}`)
+    .map((line) => `${line.role === "user" ? "使用者" : "小書僮"}：${String(line.text).trim()}`)
     .join("\n");
   if (!transcriptText) return [];
   const existingText = existing.length ? existing.map((item) => `- ${memoryContent(item)}`).join("\n") : "（目前沒有任何記憶）";
-  const prompt = `你是「頁師傅」的長期記憶整理助手。請從本次對話中找出值得下次對談使用的新資訊。
+  const prompt = `你是「小書僮」的長期記憶整理助手。請從本次對話中找出值得下次對談使用的新資訊。
 
 ## 已有記憶
 ${existingText}
@@ -185,7 +185,7 @@ ${transcriptText}
 
 export async function consolidateMemories(apiKey, memories, budgetTokens, fetchImpl = fetch) {
   if (!Array.isArray(memories) || !memories.length) return [];
-  const prompt = `以下是頁師傅對使用者的未鎖定長期記憶，總量已超過限制，需要安全濃縮。
+  const prompt = `以下是小書僮對使用者的未鎖定長期記憶，總量已超過限制，需要安全濃縮。
 
 ## 目前記憶
 ${memories.map((item) => `- ${memoryContent(item)}`).join("\n")}

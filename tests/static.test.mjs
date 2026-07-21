@@ -50,6 +50,15 @@ test("side panel declares TranscriptCollector before creating state", async () =
   assert.ok(declaration < initialization, "TranscriptCollector must be declared before initialization");
 });
 
+test("hiding the side panel and changing modes clear temporary transcript and source", async () => {
+  const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
+  const storage = await readFile(path.join(root, "js", "storage.js"), "utf8");
+  assert.match(storage, /export async function clearSource\(\)[\s\S]*?storage\.session\.remove\(SOURCE_KEY\)/);
+  assert.match(panel, /document\.addEventListener\("visibilitychange",[\s\S]*?document\.visibilityState === "hidden"[\s\S]*?clearTemporaryContent\(\)/);
+  assert.match(panel, /async function clearTemporaryContent\(\)[\s\S]*?state\.transcript = new TranscriptCollector\(\);[\s\S]*?state\.source = null;[\s\S]*?await clearSource\(\)/);
+  assert.match(panel, /async function setConversationMode\(mode\)[\s\S]*?await clearTemporaryContent\(\)/);
+});
+
 test("settings stay inside the side panel dialog", async () => {
   const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
   const script = await readFile(path.join(root, "sidepanel.js"), "utf8");

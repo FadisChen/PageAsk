@@ -13,6 +13,7 @@ import { processCompanionMemory } from "./js/memory.js";
 import { createActiveSource } from "./js/source.js";
 import {
   createMemory,
+  clearSource,
   estimateTokens,
   loadMemories,
   loadSettings,
@@ -173,17 +174,28 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "session" && changes[SOURCE_KEY]?.newValue && !state.started) {
-    state.source = changes[SOURCE_KEY].newValue;
+  if (areaName === "session" && SOURCE_KEY in changes && !state.started) {
+    state.source = changes[SOURCE_KEY].newValue || null;
     renderSource();
     renderControls();
   }
 });
 
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") void clearTemporaryContent();
+});
+
 window.addEventListener("beforeunload", () => {
   state.session?.stop(false);
   void state.audio?.stop();
+  void clearTemporaryContent();
 });
+
+async function clearTemporaryContent() {
+  state.transcript = new TranscriptCollector();
+  state.source = null;
+  await clearSource();
+}
 
 async function startBlockPicker() {
   if (state.started) return;
@@ -328,6 +340,7 @@ function closeSettings() {
 async function setConversationMode(mode) {
   if (state.started || state.ending || state.memoryProcessing || state.settings.conversationMode === mode) return;
   state.settings = await saveSettings({ ...state.settings, conversationMode: mode });
+  await clearTemporaryContent();
   setStatus("ready");
   renderAll();
 }
@@ -588,7 +601,7 @@ function renderMemoryList() {
   if (!state.memories.length) {
     const empty = document.createElement("p");
     empty.className = "memory-empty";
-    empty.textContent = "還沒有留下記憶。你可以手動新增，或在陪伴對談結束後交給頁師傅整理。";
+    empty.textContent = "還沒有留下記憶。你可以手動新增，或在陪伴對談結束後交給小書僮整理。";
     elements.memoryList.appendChild(empty);
     return;
   }
@@ -711,7 +724,7 @@ function renderControls() {
 function renderStatus() {
   const companion = (state.activeMode || state.settings.conversationMode) === "companion";
   const readyHint = companion
-    ? (state.settings.companionMemoryEnabled ? "不用準備來源，頁師傅會帶著你們的長期記憶來陪你" : "不用準備來源，隨時可以直接聊聊")
+    ? (state.settings.companionMemoryEnabled ? "不用準備來源，小書僮會帶著你們的長期記憶來陪你" : "不用準備來源，隨時可以直接聊聊")
     : (state.source ? "可以開始針對目前來源對談" : "加入內容後即可開始語音或文字對談");
   const statusCopy = {
     ready: ["準備好了", readyHint],
@@ -721,7 +734,7 @@ function renderStatus() {
     listening: !state.microphoneActive
       ? ["文字對談已連線", "輸入訊息後按 Enter 送出"]
       : [state.muted ? "麥克風已靜音" : "正在聽你說", state.muted ? "可用文字繼續提問" : "你可以自然說話，隨時插話"],
-    speaking: ["頁師傅 正在回答", "開口即可打斷目前回應"],
+    speaking: ["小書僮 正在回答", "開口即可打斷目前回應"],
     failed: ["連線失敗", "請檢查設定、網路與免費配額"],
     "processing-memory": ["正在整理記憶", "從這次對話挑出值得長期記住的事"],
     stopped: ["對談已結束", companion ? "隨時可以再開始一場陪伴對談" : "可以保留來源再開始一場新對談"],
@@ -746,7 +759,7 @@ function renderTranscript() {
     const companion = (state.activeMode || state.settings.conversationMode) === "companion";
     copy.textContent = companion && state.settings.companionMemoryEnabled
       ? "逐字稿只用於會後整理長期記憶，整理完成即捨棄；關閉面板不會保存。"
-      : "開始後，你和 頁師傅 的即時字幕會留在這裡；關閉面板後不會保存。";
+      : "開始後，你和 小書僮 的即時字幕會留在這裡；關閉面板後不會保存。";
     empty.append(title, copy);
     elements.transcript.appendChild(empty);
     return;
@@ -755,7 +768,7 @@ function renderTranscript() {
     const row = document.createElement("div");
     row.className = `transcript-line ${line.role === "model" ? "is-model" : ""}`;
     const label = document.createElement("strong");
-    label.textContent = line.role === "model" ? "頁師傅" : "你";
+    label.textContent = line.role === "model" ? "小書僮" : "你";
     const text = document.createElement("p");
     text.textContent = line.text;
     row.append(label, text);
