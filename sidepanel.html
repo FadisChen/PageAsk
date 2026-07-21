@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PageAsk</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="panel-body">
+  <main class="panel-shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">READ · ASK · LISTEN</p>
+        <h1>頁師傅</h1>
+      </div>
+      <button class="icon-button" id="settingsButton" type="button" aria-label="開啟設定" title="設定">⚙</button>
+    </header>
+
+    <section class="source-section" aria-labelledby="sourceHeading">
+      <div class="section-heading">
+        <div>
+          <p class="section-index">01</p>
+          <h2 id="sourceHeading">目前來源</h2>
+        </div>
+        <span class="source-state" id="sourceState">尚未加入</span>
+      </div>
+      <article class="source-card is-empty" id="sourceCard">
+        <p class="source-kicker" id="sourceKind">等待資料</p>
+        <h3 id="sourceTitle">選一段真正想讀懂的內容</h3>
+        <p class="source-preview" id="sourcePreview">從目前網頁挑選區塊、反白文字按右鍵，或上傳 PDF 與文字檔。</p>
+        <a class="source-link is-hidden" id="sourceLink" target="_blank" rel="noreferrer">開啟原始網頁 ↗</a>
+        <p class="source-warning is-hidden" id="sourceWarning"></p>
+      </article>
+      <div class="source-actions">
+        <button class="button button-secondary" id="pickBlockButton" type="button">選取網頁區塊</button>
+        <button class="button button-secondary" id="uploadButton" type="button">上傳檔案</button>
+        <input id="fileInput" type="file" accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain,text/markdown,text/csv,application/json" hidden>
+      </div>
+    </section>
+
+    <section class="conversation-section" aria-labelledby="conversationHeading">
+      <div class="section-heading conversation-heading">
+        <div>
+          <p class="section-index">02</p>
+          <h2 id="conversationHeading">即時對談</h2>
+        </div>
+        <div class="connection-pill" id="connectionPill"><span class="status-dot"></span><span id="connectionText">準備中</span></div>
+      </div>
+
+      <div class="voice-stage" id="voiceStage">
+        <div class="voice-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="voice-copy">
+          <strong id="voiceStatus">先準備一份來源</strong>
+          <span id="voiceHint">加入內容後即可開始語音或文字對談</span>
+        </div>
+        <div class="level-meter" aria-hidden="true"><span id="levelBar"></span></div>
+      </div>
+
+      <aside class="microphone-notice" id="microphoneNotice" role="status">
+        <span class="microphone-mark" aria-hidden="true">MIC</span>
+        <div class="microphone-copy">
+          <strong id="microphonePermissionTitle">開始前請允許麥克風</strong>
+          <span id="microphonePermissionText">首次開始對談時，請在 Chrome 權限提示中選擇「允許」。</span>
+        </div>
+        <button id="openMicrophoneSettingsButton" type="button">權限設定</button>
+      </aside>
+
+      <label class="text-only-toggle" for="textOnlyMode">
+        <input id="textOnlyMode" type="checkbox">
+        <span><strong>只使用文字</strong><small>不開啟麥克風，模型語音回覆仍會播放</small></span>
+      </label>
+
+      <div class="call-actions" id="callActions">
+        <button class="button button-primary" id="startButton" type="button">開始對談</button>
+        <button class="button button-quiet" id="muteButton" type="button" disabled>麥克風靜音</button>
+        <button class="button button-danger" id="endButton" type="button" disabled>結束</button>
+      </div>
+
+      <div class="transcript" id="transcript" aria-live="polite">
+        <div class="transcript-empty" id="transcriptEmpty">
+          <span>逐字稿</span>
+          <p>開始後，你和 頁師傅 的即時字幕會留在這裡；關閉面板後不會保存。</p>
+        </div>
+      </div>
+
+      <div class="tool-feed is-hidden" id="toolFeed" aria-live="polite">
+        <p class="tool-feed-title">GROUNDING</p>
+        <div id="toolItems"></div>
+      </div>
+
+      <form class="composer" id="composer">
+        <label class="sr-only" for="textInput">輸入訊息</label>
+        <textarea id="textInput" rows="2" maxlength="4000" placeholder="也可以打字提問…" aria-describedby="composerHint" disabled></textarea>
+        <button class="send-button" id="sendButton" type="submit" disabled aria-label="傳送訊息">送出</button>
+        <span class="composer-hint" id="composerHint">Enter 送出 · Ctrl+Enter 換行</span>
+      </form>
+    </section>
+  </main>
+  <dialog class="settings-dialog" id="settingsDialog" aria-labelledby="settingsDialogTitle">
+    <form id="panelSettingsForm">
+      <header class="dialog-header">
+        <div>
+          <p class="eyebrow">PAGEASK · SETTINGS</p>
+          <h2 id="settingsDialogTitle">對談設定</h2>
+        </div>
+        <button class="dialog-close" id="settingsCloseButton" type="button" aria-label="關閉設定">×</button>
+      </header>
+
+      <div class="dialog-body">
+        <div class="dialog-field">
+          <label for="settingsApiKey">Gemini API key</label>
+          <p>金鑰會未加密地保存在這個 Chrome 使用者設定檔。</p>
+          <div class="secret-field">
+            <input id="settingsApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" required>
+            <button id="settingsToggleKeyButton" type="button">顯示</button>
+          </div>
+        </div>
+
+        <div class="dialog-field">
+          <label for="settingsVoiceName">Gemini 原生聲線</label>
+          <select id="settingsVoiceName"></select>
+        </div>
+
+        <div class="dialog-test-row">
+          <button class="button button-secondary" id="settingsTestButton" type="button">測試並儲存</button>
+          <span class="test-status" id="settingsTestStatus" role="status"></span>
+        </div>
+
+        <aside class="dialog-privacy">
+          網頁內容、檔案文字與對談會直接送往 Google；免費層內容可能用於改善 Google 產品。
+        </aside>
+      </div>
+
+      <footer class="dialog-footer">
+        <button class="button button-secondary" id="settingsCancelButton" type="button">取消</button>
+        <button class="button button-primary" type="submit">儲存設定</button>
+      </footer>
+    </form>
+  </dialog>
+  <div class="toast-region" id="toastRegion" aria-live="assertive"></div>
+  <script src="vendor/pdf.min.js"></script>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "PageAsk",
+  "version": "1.0.0",
+  "description": "針對網頁選取內容或檔案，使用 Gemini Live 即時語音與文字對談。",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "activeTab",
+    "scripting",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "開啟 PageAsk",
+    "default_icon": {
+      "16": "images/icon48.png",
+      "48": "images/icon48.png",
+      "128": "images/icon48.png"
+    }
+  },
+  "icons": {
+    "16": "images/icon48.png",
+    "48": "images/icon48.png",
+    "128": "images/icon48.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com"
+  }
+}
