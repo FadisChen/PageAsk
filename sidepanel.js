@@ -97,6 +97,7 @@ const elements = Object.fromEntries([
 ].map((id) => [id, document.getElementById(id)]));
 
 let microphonePermissionStatus = null;
+let transcriptRenderPending = false;
 
 const state = {
   settings: await loadSettings(),
@@ -182,7 +183,14 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") void clearTemporaryContent();
+  if (
+    document.visibilityState === "hidden" &&
+    !state.started &&
+    !state.ending &&
+    !state.memoryProcessing
+  ) {
+    void clearTemporaryContent();
+  }
 });
 
 window.addEventListener("beforeunload", () => {
@@ -295,10 +303,10 @@ async function startSession() {
     }, {
       onStatus: setStatus,
       onAudio: (bytes) => state.audio?.playPcm24k(bytes),
-      onUserTranscript: (text) => { state.transcript.onUser(text); renderTranscript(); },
-      onModelTranscript: (text) => { state.transcript.onModel(text); renderTranscript(); },
-      onInterrupted: () => { state.audio?.flushPlayback(); state.transcript.onInterrupted(); renderTranscript(); },
-      onTurnComplete: () => { state.transcript.onTurnComplete(); renderTranscript(); },
+      onUserTranscript: (text) => { state.transcript.onUser(text); scheduleTranscriptRender(); },
+      onModelTranscript: (text) => { state.transcript.onModel(text); scheduleTranscriptRender(); },
+      onInterrupted: () => { state.audio?.flushPlayback(); state.transcript.onInterrupted(); scheduleTranscriptRender(); },
+      onTurnComplete: () => { state.transcript.onTurnComplete(); scheduleTranscriptRender(); },
       onGrounding: handleGroundingEvent,
       onError: (error) => {
         toast(friendlyApiError(error), true);
@@ -776,6 +784,15 @@ function renderTranscript() {
     elements.transcript.appendChild(row);
   }
   elements.transcript.scrollTop = elements.transcript.scrollHeight;
+}
+
+function scheduleTranscriptRender() {
+  if (transcriptRenderPending) return;
+  transcriptRenderPending = true;
+  requestAnimationFrame(() => {
+    transcriptRenderPending = false;
+    renderTranscript();
+  });
 }
 
 function renderTools() {

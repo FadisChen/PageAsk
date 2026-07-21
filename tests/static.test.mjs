@@ -50,11 +50,12 @@ test("side panel declares TranscriptCollector before creating state", async () =
   assert.ok(declaration < initialization, "TranscriptCollector must be declared before initialization");
 });
 
-test("hiding the side panel and changing modes clear temporary transcript and source", async () => {
+test("temporary content clears only when hiding an idle side panel or changing modes", async () => {
   const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
   const storage = await readFile(path.join(root, "js", "storage.js"), "utf8");
   assert.match(storage, /export async function clearSource\(\)[\s\S]*?storage\.session\.remove\(SOURCE_KEY\)/);
-  assert.match(panel, /document\.addEventListener\("visibilitychange",[\s\S]*?document\.visibilityState === "hidden"[\s\S]*?clearTemporaryContent\(\)/);
+  assert.match(panel, /document\.addEventListener\("visibilitychange",[\s\S]*?document\.visibilityState === "hidden" &&[\s\S]*?!state\.started &&[\s\S]*?!state\.ending &&[\s\S]*?!state\.memoryProcessing[\s\S]*?clearTemporaryContent\(\)/);
+  assert.match(panel, /window\.addEventListener\("beforeunload",[\s\S]*?state\.session\?\.stop\(false\);[\s\S]*?clearTemporaryContent\(\)/);
   assert.match(panel, /async function clearTemporaryContent\(\)[\s\S]*?state\.transcript = new TranscriptCollector\(\);[\s\S]*?state\.source = null;[\s\S]*?await clearSource\(\)/);
   assert.match(panel, /async function setConversationMode\(mode\)[\s\S]*?await clearTemporaryContent\(\)/);
 });
@@ -102,6 +103,8 @@ test("text-only mode starts Live without requesting microphone capture", async (
   assert.match(panel, /muteButton\.classList\.toggle\("is-hidden", textOnly\)/);
   assert.match(panel, /callActions\.classList\.toggle\("is-text-only", textOnly\)/);
   assert.match(audio, /if \(captureMicrophone\) \{/);
+  assert.match(audio, /createScriptProcessor\(1024, 1, 1\)/);
+  assert.match(panel, /requestAnimationFrame\(\(\) => \{/);
 });
 
 test("companion mode can start without a source and exposes local memory controls", async () => {

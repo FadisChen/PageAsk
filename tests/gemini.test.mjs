@@ -214,6 +214,21 @@ test("generationComplete does not finalize a Live turn before turnComplete", asy
   assert.equal(completed, 1);
 });
 
+test("raw Live messages are parsed in arrival order", async () => {
+  const received = [];
+  const session = new LiveSession({ apiKey: "test", systemInstruction: "測試" });
+  const socket = {};
+  session.socket = socket;
+  session.handleMessage = (message) => received.push(message.id);
+  const first = {
+    text: () => new Promise((resolve) => setTimeout(() => resolve('{"id":1}'), 10)),
+  };
+  const second = { text: async () => '{"id":2}' };
+  session.queueRawMessage(socket, first);
+  await session.queueRawMessage(socket, second);
+  assert.deepEqual(received, [1, 2]);
+});
+
 test("text-only Live turns automatically continue an obviously incomplete sentence", async () => {
   const sent = [];
   let completed = 0;

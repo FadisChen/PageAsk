@@ -1,4 +1,5 @@
 import { API_BASE, GROUNDING_MODEL, LIVE_MODEL, MAX_MEMORY_CHARS, WS_BASE } from "./constants.js";
+import { mergePartial } from "./transcript.js";
 
 export const GROUNDING_FUNCTION_DECLARATION = Object.freeze({
   name: "ground_with_google_search",
@@ -299,6 +300,7 @@ export class LiveSession {
     this.modelTranscript = "";
     this.autoContinueCount = 0;
     this.turnCompletionTimer = null;
+    this.messageQueue = Promise.resolve();
   }
 
   start() {
@@ -328,6 +330,7 @@ export class LiveSession {
     this.modelTranscript = "";
     this.autoContinueCount = 0;
     this.turnCompletionTimer = null;
+    this.messageQueue = Promise.resolve();
     if (notify) this.callbacks.onStatus?.("stopped");
   }
 
@@ -357,8 +360,9 @@ export class LiveSession {
     this.callbacks.onStatus?.(reconnecting ? "reconnecting" : "connecting");
     const socket = new WebSocket(`${WS_BASE}?key=${encodeURIComponent(this.config.apiKey)}`);
     this.socket = socket;
+    this.messageQueue = Promise.resolve();
     socket.onopen = () => socket.send(JSON.stringify(this.setupMessage()));
-    socket.onmessage = (event) => this.handleRawMessage(socket, event.data);
+    socket.onmessage = (event) => this.queueRawMessage(socket, event.data);
     socket.onerror = () => this.callbacks.onDebug?.("WebSocket 發生錯誤。");
     socket.onclose = (event) => this.handleClose(socket, event);
   }
@@ -383,6 +387,7 @@ export class LiveSession {
     if (this.turnCompletionTimer) this.finishPendingTurn();
     this.autoContinueCount = 0;
     this.send({ realtimeInput: { text: value } });
+    this.callbacks.onStatus?.("speaking");
     return true;
   }
 
@@ -424,7 +429,7 @@ export class LiveSession {
       if (receivedAudio) this.callbacks.onStatus?.("speaking");
       if (content.inputTranscription?.text) this.callbacks.onUserTranscript?.(content.inputTranscription.text);
       if (content.outputTranscription?.text) {
-        this.modelTranscript = mergeTranscriptFragment(this.modelTranscript, content.outputTranscription.text);
+        this.modelTranscript = mergePartial(this.modelTranscript, content.outputTranscription.text);
         this.callbacks.onModelTranscript?.(content.outputTranscription.text);
       }
       if (content.interrupted) {
@@ -495,9 +500,17 @@ export class LiveSession {
     if (responses.length) this.send({ toolResponse: { functionResponses: responses } });
   }
 
+  queueRawMessage(socket, raw) {
+    this.messageQueue = this.messageQueue.then(() => this.handleRawMessage(socket, raw));
+    return this.messageQueue;
+  }
+
   scheduleTurnCompletion() {
     clearTimeout(this.turnCompletionTimer);
-    const settleMs = Number.isFinite(this.config.transcriptSettleMs) ? this.config.transcriptSettleMs : 300;
+    const defaultSettleMs = this.config.autoContinueIncompleteText === true ? 150 : 0;
+    const settleMs = Number.isFinite(this.config.transcriptSettleMs)
+      ? this.config.transcriptSettleMs
+      : defaultSettleMs;
     this.turnCompletionTimer = setTimeout(() => {
       this.turnCompletionTimer = null;
       if (this.shouldAutoContinue()) {
@@ -505,7 +518,7 @@ export class LiveSession {
         this.callbacks.onDebug?.(`文字回應停在半句，自動續接（${this.autoContinueCount}/2）。`);
         this.send({
           realtimeInput: {
-            text: "請直接從上一段中斷處接續，不要重複已說過的內容；請在完整句子或段落結束後停止。",
+            text: "上一段最後一句尚未完成。請直接補完並自然接續必要內容；不要致歉、不要提到接續，也不要重複已輸出的文字。完成一個自然段落後停止。",
           },
         });
         this.callbacks.onStatus?.("speaking");
@@ -599,16 +612,6 @@ function base64ToBytes(base64) {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
-}
-
-function mergeTranscriptFragment(current, incoming) {
-  const existing = String(current || "").trim();
-  const next = String(incoming || "").trim();
-  if (!existing) return next;
-  if (!next) return existing;
-  if (next.startsWith(existing)) return next;
-  if (existing.endsWith(next)) return existing;
-  return existing + next;
 }
 
 export function appearsIncomplete(text) {

@@ -12,3 +12,9 @@ test("cumulative transcript updates keep their internal spacing", () => {
   assert.equal(mergePartial("Hello", "  Hello world  "), "Hello world");
   assert.equal(mergePartial("Hello world", " world "), "Hello world");
 });
+
+test("streamed Latin text keeps meaningful boundary spaces without spacing CJK text", () => {
+  assert.equal(mergePartial("Hello ", "world"), "Hello world");
+  assert.equal(mergePartial("Hello,", " world"), "Hello, world");
+  assert.equal(mergePartial("第一段 ", "第二段"), "第一段第二段");
+});

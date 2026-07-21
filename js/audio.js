@@ -32,7 +32,7 @@ export class BrowserAudioEngine {
         video: false,
       });
       this.source = this.context.createMediaStreamSource(this.stream);
-      this.processor = this.context.createScriptProcessor(2048, 1, 1);
+      this.processor = this.context.createScriptProcessor(1024, 1, 1);
       this.silentGain = this.context.createGain();
       this.silentGain.gain.value = 0;
       this.processor.onaudioprocess = (event) => this.capture(event.inputBuffer.getChannelData(0));
