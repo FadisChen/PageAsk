@@ -296,6 +296,9 @@ export class LiveSession {
     this.runId = 0;
     this.toolJobs = new Map();
     this.pendingToolResponses = [];
+    this.modelTranscript = "";
+    this.autoContinueCount = 0;
+    this.turnCompletionTimer = null;
   }
 
   start() {
@@ -313,6 +316,7 @@ export class LiveSession {
     this.stopped = true;
     this.runId += 1;
     clearTimeout(this.reconnectTimer);
+    clearTimeout(this.turnCompletionTimer);
     this.cancelToolCalls([...this.toolJobs.keys()]);
     if (this.ready) this.send({ realtimeInput: { audioStreamEnd: true } });
     this.socket?.close(1000, "user ended session");
@@ -321,6 +325,9 @@ export class LiveSession {
     this.audioBuffer = [];
     this.audioBufferBytes = 0;
     this.pendingToolResponses = [];
+    this.modelTranscript = "";
+    this.autoContinueCount = 0;
+    this.turnCompletionTimer = null;
     if (notify) this.callbacks.onStatus?.("stopped");
   }
 
@@ -373,6 +380,8 @@ export class LiveSession {
   sendText(text) {
     const value = String(text || "").trim();
     if (!value || !this.ready) return false;
+    if (this.turnCompletionTimer) this.finishPendingTurn();
+    this.autoContinueCount = 0;
     this.send({ realtimeInput: { text: value } });
     return true;
   }
@@ -414,15 +423,19 @@ export class LiveSession {
       }
       if (receivedAudio) this.callbacks.onStatus?.("speaking");
       if (content.inputTranscription?.text) this.callbacks.onUserTranscript?.(content.inputTranscription.text);
-      if (content.outputTranscription?.text) this.callbacks.onModelTranscript?.(content.outputTranscription.text);
+      if (content.outputTranscription?.text) {
+        this.modelTranscript = mergeTranscriptFragment(this.modelTranscript, content.outputTranscription.text);
+        this.callbacks.onModelTranscript?.(content.outputTranscription.text);
+      }
       if (content.interrupted) {
+        clearTimeout(this.turnCompletionTimer);
+        this.turnCompletionTimer = null;
+        this.modelTranscript = "";
+        this.autoContinueCount = 0;
         this.callbacks.onInterrupted?.();
         this.callbacks.onStatus?.("listening");
       }
-      if (content.turnComplete || content.generationComplete) {
-        this.callbacks.onTurnComplete?.();
-        this.callbacks.onStatus?.("listening");
-      }
+      if (content.turnComplete) this.scheduleTurnCompletion();
       const cancelled = content.toolCallCancellation?.ids || content.cancelledFunctionCallIds;
       if (cancelled?.length) this.cancelToolCalls(cancelled);
     }
@@ -480,6 +493,41 @@ export class LiveSession {
   flushToolResponses() {
     const responses = this.pendingToolResponses.splice(0);
     if (responses.length) this.send({ toolResponse: { functionResponses: responses } });
+  }
+
+  scheduleTurnCompletion() {
+    clearTimeout(this.turnCompletionTimer);
+    const settleMs = Number.isFinite(this.config.transcriptSettleMs) ? this.config.transcriptSettleMs : 300;
+    this.turnCompletionTimer = setTimeout(() => {
+      this.turnCompletionTimer = null;
+      if (this.shouldAutoContinue()) {
+        this.autoContinueCount += 1;
+        this.callbacks.onDebug?.(`文字回應停在半句，自動續接（${this.autoContinueCount}/2）。`);
+        this.send({
+          realtimeInput: {
+            text: "請直接從上一段中斷處接續，不要重複已說過的內容；請在完整句子或段落結束後停止。",
+          },
+        });
+        this.callbacks.onStatus?.("speaking");
+        return;
+      }
+      this.finishPendingTurn();
+    }, Math.max(0, settleMs));
+  }
+
+  shouldAutoContinue() {
+    return this.config.autoContinueIncompleteText === true
+      && this.autoContinueCount < 2
+      && appearsIncomplete(this.modelTranscript);
+  }
+
+  finishPendingTurn() {
+    clearTimeout(this.turnCompletionTimer);
+    this.turnCompletionTimer = null;
+    this.modelTranscript = "";
+    this.autoContinueCount = 0;
+    this.callbacks.onTurnComplete?.();
+    this.callbacks.onStatus?.("listening");
   }
 
   handleClose(socket, event) {
@@ -551,6 +599,22 @@ function base64ToBytes(base64) {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+function mergeTranscriptFragment(current, incoming) {
+  const existing = String(current || "").trim();
+  const next = String(incoming || "").trim();
+  if (!existing) return next;
+  if (!next) return existing;
+  if (next.startsWith(existing)) return next;
+  if (existing.endsWith(next)) return existing;
+  return existing + next;
+}
+
+export function appearsIncomplete(text) {
+  const value = String(text || "").trim();
+  if (value.length < 24) return false;
+  return !/[。！？!?….」』）】”’》〉〕］]$/u.test(value);
 }
 
 async function readJson(response) {

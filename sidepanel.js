@@ -291,6 +291,7 @@ async function startSession() {
       apiKey: state.settings.apiKey,
       voiceName: state.settings.voiceName,
       systemInstruction,
+      autoContinueIncompleteText: !useMicrophone,
     }, {
       onStatus: setStatus,
       onAudio: (bytes) => state.audio?.playPcm24k(bytes),

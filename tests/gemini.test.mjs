@@ -10,6 +10,7 @@ import {
   extractMemories,
   friendlyApiError,
   GROUNDING_FUNCTION_DECLARATION,
+  appearsIncomplete,
   LiveSession,
   parseGroundingResponse,
   probeLiveModel,
@@ -197,4 +198,81 @@ test("stopped live sessions do not retain microphone audio", () => {
   session.sendAudio(new Uint8Array([1, 2, 3]));
   assert.equal(session.audioBufferBytes, 0);
   assert.deepEqual(session.audioBuffer, []);
+});
+
+test("generationComplete does not finalize a Live turn before turnComplete", async () => {
+  let completed = 0;
+  const session = new LiveSession(
+    { apiKey: "test", systemInstruction: "測試", transcriptSettleMs: 0 },
+    { onTurnComplete: () => { completed += 1; } },
+  );
+  session.handleMessage({ serverContent: { outputTranscription: { text: "完整回答。" } } });
+  session.handleMessage({ serverContent: { generationComplete: true } });
+  assert.equal(completed, 0);
+  session.handleMessage({ serverContent: { turnComplete: true } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(completed, 1);
+});
+
+test("text-only Live turns automatically continue an obviously incomplete sentence", async () => {
+  const sent = [];
+  let completed = 0;
+  const session = new LiveSession(
+    {
+      apiKey: "test",
+      systemInstruction: "測試",
+      autoContinueIncompleteText: true,
+      transcriptSettleMs: 0,
+    },
+    { onTurnComplete: () => { completed += 1; } },
+  );
+  session.socket = { readyState: 1, send: (payload) => sent.push(JSON.parse(payload)) };
+  const originalWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = { OPEN: 1 };
+  try {
+    session.handleMessage({
+      serverContent: {
+        outputTranscription: { text: "這是一段足夠長，而且明顯停在句子中間，尚未把原本內容說完的回答內容" },
+      },
+    });
+    session.handleMessage({ serverContent: { turnComplete: true } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+  assert.equal(completed, 0);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].realtimeInput.text, /接續/);
+
+  globalThis.WebSocket = { OPEN: 1 };
+  try {
+    session.handleMessage({ serverContent: { turnComplete: true } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    session.handleMessage({ serverContent: { turnComplete: true } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+  assert.equal(sent.length, 2);
+  assert.equal(completed, 1);
+});
+
+test("Live turn still completes when no output transcript is returned", async () => {
+  let completed = 0;
+  const session = new LiveSession(
+    { apiKey: "test", systemInstruction: "測試", transcriptSettleMs: 0 },
+    { onTurnComplete: () => { completed += 1; } },
+  );
+  session.handleMessage({ serverContent: { turnComplete: true } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(completed, 1);
+});
+
+test("incomplete response detection ignores short answers and accepts terminal punctuation", () => {
+  assert.equal(appearsIncomplete("臺北"), false);
+  assert.equal(appearsIncomplete("這是一段長度足夠，而且最後有完整句號的回答內容。"), false);
+  assert.equal(
+    appearsIncomplete("這是一段長度足夠，但最後停在句子中間，還有後續內容沒有說完的回答內容"),
+    true,
+  );
 });
