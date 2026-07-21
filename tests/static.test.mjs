@@ -95,6 +95,28 @@ test("text-only mode starts Live without requesting microphone capture", async (
   assert.match(audio, /if \(captureMicrophone\) \{/);
 });
 
+test("companion mode can start without a source and exposes local memory controls", async () => {
+  const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
+  const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
+  assert.match(html, /id="readingModeButton"/);
+  assert.match(html, /id="companionModeButton"/);
+  assert.match(html, /id="settingsCompanionPrompt"/);
+  assert.match(html, /id="settingsMemoryEnabled"/);
+  assert.match(html, /id="memoryList"/);
+  assert.match(panel, /mode === "reading" && !state\.source/);
+  assert.match(panel, /buildCompanionSystemInstruction/);
+  assert.match(panel, /processCompanionMemory/);
+  assert.match(panel, /state\.memoryProcessing/);
+});
+
+test("grounding feed is collapsed by default and remains user-expandable", async () => {
+  const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
+  const details = html.match(/<details[^>]+id="toolFeed"[^>]*>/)?.[0] || "";
+  assert.match(details, /<details/);
+  assert.doesNotMatch(details, /\sopen(?:\s|=|>)/);
+  assert.match(html, /<summary>/);
+});
+
 async function collectJavaScript(directory) {
   const output = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {

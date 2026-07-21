@@ -46,7 +46,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const apiKey = apiKeyInput.value.trim();
   if (!apiKey) return showSaveStatus("API key 不可空白。", true);
-  await saveSettings({ apiKey, voiceName: voiceSelect.value });
+  await saveSettings({ ...settings, apiKey, voiceName: voiceSelect.value });
   showSaveStatus("設定已儲存。", false);
 });
 

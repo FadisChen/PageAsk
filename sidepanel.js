@@ -1,9 +1,27 @@
 import { BrowserAudioEngine } from "./js/audio.js";
-import { MESSAGE_TYPES, SOURCE_KEY, VOICES } from "./js/constants.js";
+import { DEFAULT_COMPANION_SYSTEM_PROMPT, MESSAGE_TYPES, SOURCE_KEY, VOICES } from "./js/constants.js";
 import { parseSourceFile } from "./js/file-parser.js";
-import { checkRequiredModels, friendlyApiError, LiveSession, probeLiveModel } from "./js/gemini.js";
+import {
+  buildCompanionSystemInstruction,
+  buildSystemInstruction,
+  checkRequiredModels,
+  friendlyApiError,
+  LiveSession,
+  probeLiveModel,
+} from "./js/gemini.js";
+import { processCompanionMemory } from "./js/memory.js";
 import { createActiveSource } from "./js/source.js";
-import { loadSettings, loadSource, saveSettings, saveSource } from "./js/storage.js";
+import {
+  createMemory,
+  estimateTokens,
+  loadMemories,
+  loadSettings,
+  loadSource,
+  saveMemories,
+  saveSettings,
+  saveSource,
+  updateMemory,
+} from "./js/storage.js";
 import { mergePartial } from "./js/transcript.js";
 
 const OPTIONAL_PAGE_ORIGINS = ["http://*/*", "https://*/*"];
@@ -54,18 +72,27 @@ export class TranscriptCollector {
     if (this.modelBuffer.trim()) output.push({ role: "model", text: this.modelBuffer.trim() });
     return output;
   }
+
+  snapshot() {
+    this.onTurnComplete();
+    return this.lines.map((line) => ({ ...line }));
+  }
 }
 
 const elements = Object.fromEntries([
-  "settingsButton", "sourceState", "sourceCard", "sourceKind", "sourceTitle", "sourcePreview",
+  "settingsButton", "readingModeButton", "companionModeButton",
+  "sourceSection", "sourceState", "sourceCard", "sourceKind", "sourceTitle", "sourcePreview",
   "sourceLink", "sourceWarning", "pickBlockButton", "uploadButton", "fileInput",
-  "connectionPill", "connectionText", "voiceStage", "voiceStatus", "voiceHint", "levelBar",
+  "conversationHeading", "connectionPill", "connectionText", "voiceStage", "voiceStatus", "voiceHint", "levelBar",
   "callActions", "startButton", "muteButton", "endButton", "transcript", "transcriptEmpty",
-  "toolFeed", "toolItems", "composer", "textInput", "sendButton", "toastRegion",
+  "toolFeed", "toolFeedState", "toolItems", "composer", "textInput", "sendButton", "toastRegion",
   "microphoneNotice", "microphonePermissionTitle", "microphonePermissionText", "openMicrophoneSettingsButton",
   "textOnlyMode",
   "settingsDialog", "panelSettingsForm", "settingsCloseButton", "settingsCancelButton",
   "settingsApiKey", "settingsToggleKeyButton", "settingsVoiceName", "settingsTestButton", "settingsTestStatus",
+  "settingsCompanionPrompt", "settingsResetPromptButton", "settingsMemoryEnabled", "settingsMemoryBudget",
+  "memoryUsage", "newMemoryButton", "newMemoryEditor", "newMemoryContent", "newMemoryLocked",
+  "saveNewMemoryButton", "cancelNewMemoryButton", "memoryList",
 ].map((id) => [id, document.getElementById(id)]));
 
 let microphonePermissionStatus = null;
@@ -73,12 +100,17 @@ let microphonePermissionStatus = null;
 const state = {
   settings: await loadSettings(),
   source: await loadSource(),
+  memories: await loadMemories(),
   session: null,
   audio: null,
   started: false,
   ending: false,
   muted: false,
   microphoneActive: false,
+  activeMode: null,
+  activeMemoryEnabled: false,
+  activeMemoryConfig: null,
+  memoryProcessing: false,
   status: "ready",
   transcript: new TranscriptCollector(),
   tools: new Map(),
@@ -98,10 +130,21 @@ elements.settingsCloseButton.addEventListener("click", closeSettings);
 elements.settingsCancelButton.addEventListener("click", closeSettings);
 elements.settingsToggleKeyButton.addEventListener("click", toggleSettingsKey);
 elements.settingsTestButton.addEventListener("click", testAndSaveSettings);
+elements.settingsResetPromptButton.addEventListener("click", () => {
+  elements.settingsCompanionPrompt.value = DEFAULT_COMPANION_SYSTEM_PROMPT;
+});
+elements.settingsMemoryBudget.addEventListener("input", renderMemoryList);
+elements.settingsMemoryEnabled.addEventListener("change", renderMemoryList);
+elements.newMemoryButton.addEventListener("click", openNewMemoryEditor);
+elements.cancelNewMemoryButton.addEventListener("click", closeNewMemoryEditor);
+elements.saveNewMemoryButton.addEventListener("click", saveNewMemory);
+elements.memoryList.addEventListener("click", handleMemoryListClick);
 elements.panelSettingsForm.addEventListener("submit", submitSettings);
 elements.settingsDialog.addEventListener("click", (event) => {
   if (event.target === elements.settingsDialog) closeSettings();
 });
+elements.readingModeButton.addEventListener("click", () => setConversationMode("reading"));
+elements.companionModeButton.addEventListener("click", () => setConversationMode("companion"));
 elements.pickBlockButton.addEventListener("click", startBlockPicker);
 elements.uploadButton.addEventListener("click", () => elements.fileInput.click());
 elements.fileInput.addEventListener("change", handleFileUpload);
@@ -185,14 +228,18 @@ async function handleFileUpload(event) {
 }
 
 async function startSession() {
-  if (state.started || state.ending) return;
+  if (state.started || state.ending || state.memoryProcessing) return;
   state.settings = await loadSettings();
   if (!state.settings.apiKey) {
     toast("請先輸入 Gemini API key。", true);
     await openSettings();
     return;
   }
-  if (!state.source) return toast("請先選取網頁內容或上傳檔案。", true);
+
+  const mode = state.settings.conversationMode;
+  if (mode === "reading" && !state.source) {
+    return toast("請先選取網頁內容或上傳檔案。", true);
+  }
   const useMicrophone = !elements.textOnlyMode.checked;
   if (useMicrophone && await monitorMicrophonePermission() === "denied") {
     toast("麥克風權限目前已封鎖，請先開啟權限再開始對談。", true);
@@ -200,12 +247,26 @@ async function startSession() {
   }
 
   state.started = true;
+  state.activeMode = mode;
+  state.activeMemoryEnabled = mode === "companion" && state.settings.companionMemoryEnabled;
+  state.activeMemoryConfig = state.activeMemoryEnabled ? {
+    apiKey: state.settings.apiKey,
+    budgetTokens: state.settings.companionMemoryBudgetTokens,
+  } : null;
   state.microphoneActive = useMicrophone;
   state.muted = !useMicrophone;
   state.transcript = new TranscriptCollector();
   state.tools.clear();
+  elements.toolFeed.open = false;
   setStatus(useMicrophone ? "permission" : "connecting");
   renderAll();
+
+  const systemInstruction = mode === "companion"
+    ? buildCompanionSystemInstruction(
+      state.settings.companionSystemPrompt,
+      state.activeMemoryEnabled ? state.memories.map((memory) => memory.content) : [],
+    )
+    : buildSystemInstruction(state.source);
 
   try {
     state.audio = new BrowserAudioEngine({
@@ -217,7 +278,7 @@ async function startSession() {
     state.session = new LiveSession({
       apiKey: state.settings.apiKey,
       voiceName: state.settings.voiceName,
-      source: state.source,
+      systemInstruction,
     }, {
       onStatus: setStatus,
       onAudio: (bytes) => state.audio?.playPcm24k(bytes),
@@ -228,7 +289,7 @@ async function startSession() {
       onGrounding: handleGroundingEvent,
       onError: (error) => {
         toast(friendlyApiError(error), true);
-        void endSession(false);
+        void endSession(false, false);
       },
     });
     state.session.start();
@@ -237,16 +298,22 @@ async function startSession() {
       renderMicrophonePermission("denied");
     }
     toast(`無法開始對談：${friendlyApiError(error)}`, true);
-    await endSession(false);
+    await endSession(false, false);
   }
 }
 
 async function openSettings() {
   state.settings = await loadSettings();
+  state.memories = await loadMemories();
   elements.settingsApiKey.value = state.settings.apiKey;
   elements.settingsVoiceName.value = state.settings.voiceName;
+  elements.settingsCompanionPrompt.value = state.settings.companionSystemPrompt;
+  elements.settingsMemoryEnabled.checked = state.settings.companionMemoryEnabled;
+  elements.settingsMemoryBudget.value = state.settings.companionMemoryBudgetTokens;
   elements.settingsApiKey.type = "password";
   elements.settingsToggleKeyButton.textContent = "顯示";
+  closeNewMemoryEditor();
+  renderMemoryList();
   showSettingsTestStatus("");
   if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
   elements.settingsApiKey.focus();
@@ -256,6 +323,61 @@ function closeSettings() {
   elements.settingsDialog.close();
   elements.settingsApiKey.type = "password";
   elements.settingsToggleKeyButton.textContent = "顯示";
+}
+
+async function setConversationMode(mode) {
+  if (state.started || state.ending || state.memoryProcessing || state.settings.conversationMode === mode) return;
+  state.settings = await saveSettings({ ...state.settings, conversationMode: mode });
+  setStatus("ready");
+  renderAll();
+}
+
+function openNewMemoryEditor() {
+  elements.newMemoryContent.value = "";
+  elements.newMemoryLocked.checked = true;
+  elements.newMemoryEditor.classList.remove("is-hidden");
+  elements.newMemoryContent.focus();
+}
+
+function closeNewMemoryEditor() {
+  elements.newMemoryEditor.classList.add("is-hidden");
+  elements.newMemoryContent.value = "";
+  elements.newMemoryLocked.checked = true;
+}
+
+async function saveNewMemory() {
+  const memory = createMemory(elements.newMemoryContent.value, elements.newMemoryLocked.checked);
+  if (!memory) return toast("記憶內容不可空白。", true);
+  state.memories = await saveMemories([...state.memories, memory]);
+  closeNewMemoryEditor();
+  renderMemoryList();
+  toast("已新增一條記憶。 ");
+}
+
+async function handleMemoryListClick(event) {
+  const button = event.target.closest("button[data-memory-action]");
+  if (!button) return;
+  const item = button.closest("[data-memory-id]");
+  const memory = state.memories.find((entry) => entry.id === item?.dataset.memoryId);
+  if (!memory) return;
+
+  if (button.dataset.memoryAction === "delete") {
+    if (!confirm("確定要刪除這條長期記憶嗎？")) return;
+    state.memories = await saveMemories(state.memories.filter((entry) => entry.id !== memory.id));
+    renderMemoryList();
+    toast("記憶已刪除。 ");
+    return;
+  }
+
+  const updated = updateMemory(
+    memory,
+    item.querySelector("textarea").value,
+    item.querySelector('input[type="checkbox"]').checked,
+  );
+  if (!updated) return toast("記憶內容不可空白。", true);
+  state.memories = await saveMemories(state.memories.map((entry) => entry.id === memory.id ? updated : entry));
+  renderMemoryList();
+  toast("記憶已更新。 ");
 }
 
 function toggleSettingsKey() {
@@ -272,8 +394,7 @@ async function testAndSaveSettings() {
   try {
     await checkRequiredModels(next.apiKey);
     await probeLiveModel(next.apiKey, { voiceName: next.voiceName });
-    await saveSettings(next);
-    state.settings = next;
+    state.settings = await saveSettings(next);
     showSettingsTestStatus("Live 連線成功，設定已儲存。", false, true);
   } catch (error) {
     showSettingsTestStatus(friendlyApiError(error), true);
@@ -286,9 +407,9 @@ async function submitSettings(event) {
   event.preventDefault();
   const next = readSettingsForm();
   if (!next) return;
-  await saveSettings(next);
-  state.settings = next;
+  state.settings = await saveSettings(next);
   closeSettings();
+  renderAll();
   toast("設定已儲存。 ");
 }
 
@@ -299,7 +420,14 @@ function readSettingsForm() {
     elements.settingsApiKey.focus();
     return null;
   }
-  return { apiKey, voiceName: elements.settingsVoiceName.value };
+  return {
+    ...state.settings,
+    apiKey,
+    voiceName: elements.settingsVoiceName.value,
+    companionSystemPrompt: elements.settingsCompanionPrompt.value,
+    companionMemoryEnabled: elements.settingsMemoryEnabled.checked,
+    companionMemoryBudgetTokens: Number(elements.settingsMemoryBudget.value),
+  };
 }
 
 function showSettingsTestStatus(message, isError = false, isSuccess = false) {
@@ -307,9 +435,13 @@ function showSettingsTestStatus(message, isError = false, isSuccess = false) {
   elements.settingsTestStatus.className = `test-status ${isError ? "is-error" : isSuccess ? "is-success" : ""}`;
 }
 
-async function endSession(showNotice = true) {
+async function endSession(showNotice = true, processMemory = true) {
   if ((!state.started && !state.audio) || state.ending) return;
   state.ending = true;
+  const completedMode = state.activeMode;
+  const shouldProcessMemory = processMemory && completedMode === "companion" && state.activeMemoryEnabled;
+  const transcript = state.transcript.snapshot();
+
   state.session?.stop();
   state.session = null;
   await state.audio?.stop();
@@ -317,11 +449,44 @@ async function endSession(showNotice = true) {
   state.started = false;
   state.muted = false;
   state.microphoneActive = false;
+
+  let notice = "對談已結束，逐字稿不會被保存。 ";
+  let noticeIsError = false;
+  if (shouldProcessMemory && transcript.length) {
+    state.memoryProcessing = true;
+    setStatus("processing-memory");
+    renderAll();
+    try {
+      const result = await processCompanionMemory({
+        apiKey: state.activeMemoryConfig.apiKey,
+        transcript,
+        memories: state.memories,
+        budgetTokens: state.activeMemoryConfig.budgetTokens,
+      });
+      state.memories = await saveMemories(result.memories);
+      notice = result.additions
+        ? `已整理完成，新增 ${result.additions} 條長期記憶。`
+        : "這次對話沒有需要新增的長期記憶。";
+      if (result.warning) {
+        notice = `${notice} ${result.warning}`;
+        noticeIsError = true;
+      }
+    } catch (error) {
+      notice = `記憶更新失敗：${friendlyApiError(error)}`;
+      noticeIsError = true;
+    } finally {
+      state.transcript = new TranscriptCollector();
+      state.memoryProcessing = false;
+    }
+  }
+
   state.ending = false;
-  state.transcript.onTurnComplete();
+  state.activeMode = null;
+  state.activeMemoryEnabled = false;
+  state.activeMemoryConfig = null;
   setStatus("stopped");
   renderAll();
-  if (showNotice) toast("對談已結束，逐字稿不會被保存。 ");
+  if (showNotice) toast(notice, noticeIsError);
 }
 
 function toggleMute() {
@@ -412,7 +577,80 @@ function handleGroundingEvent(event) {
   renderTools();
 }
 
+function renderMemoryList() {
+  const budget = Number(elements.settingsMemoryBudget.value) || state.settings.companionMemoryBudgetTokens;
+  const used = state.memories.reduce((sum, memory) => sum + estimateTokens(memory.content), 0);
+  const paused = !elements.settingsMemoryEnabled.checked;
+  elements.memoryUsage.textContent = `${state.memories.length} 條 · 約 ${used.toLocaleString()} / ${budget.toLocaleString()} tokens${paused ? " · 已暫停" : ""}`;
+  elements.memoryUsage.classList.toggle("is-over-budget", used > budget);
+  elements.memoryList.replaceChildren();
+
+  if (!state.memories.length) {
+    const empty = document.createElement("p");
+    empty.className = "memory-empty";
+    empty.textContent = "還沒有留下記憶。你可以手動新增，或在陪伴對談結束後交給頁師傅整理。";
+    elements.memoryList.appendChild(empty);
+    return;
+  }
+
+  const memories = [...state.memories].sort((a, b) => b.updatedAt - a.updatedAt);
+  for (const memory of memories) {
+    const item = document.createElement("article");
+    item.className = "memory-item";
+    item.dataset.memoryId = memory.id;
+
+    const textarea = document.createElement("textarea");
+    textarea.maxLength = 4000;
+    textarea.rows = 3;
+    textarea.value = memory.content;
+    textarea.setAttribute("aria-label", "記憶內容");
+
+    const meta = document.createElement("div");
+    meta.className = "memory-meta";
+    const lock = document.createElement("label");
+    lock.className = "memory-lock-toggle";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = memory.locked;
+    lock.append(checkbox, document.createTextNode(" 鎖定"));
+
+    const updated = document.createElement("span");
+    updated.textContent = `${new Date(memory.updatedAt).toLocaleDateString("zh-TW")} · 約 ${estimateTokens(memory.content)} tokens`;
+
+    const actions = document.createElement("div");
+    actions.className = "memory-item-actions";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.dataset.memoryAction = "save";
+    save.textContent = "儲存";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.dataset.memoryAction = "delete";
+    remove.textContent = "刪除";
+    actions.append(save, remove);
+    meta.append(lock, updated, actions);
+    item.append(textarea, meta);
+    elements.memoryList.appendChild(item);
+  }
+}
+
+function renderMode() {
+  const mode = state.activeMode || state.settings.conversationMode;
+  const locked = state.started || state.ending || state.memoryProcessing;
+  const companion = mode === "companion";
+  elements.readingModeButton.classList.toggle("is-active", !companion);
+  elements.companionModeButton.classList.toggle("is-active", companion);
+  elements.readingModeButton.setAttribute("aria-pressed", String(!companion));
+  elements.companionModeButton.setAttribute("aria-pressed", String(companion));
+  elements.readingModeButton.disabled = locked;
+  elements.companionModeButton.disabled = locked;
+  elements.sourceSection.classList.toggle("is-hidden", companion);
+  elements.conversationHeading.textContent = companion ? "陪伴對談" : "即時對談";
+  elements.startButton.textContent = companion ? "開始陪伴" : "開始對談";
+}
+
 function renderAll() {
+  renderMode();
   renderSource();
   renderControls();
   renderTranscript();
@@ -453,12 +691,13 @@ function renderSource() {
 }
 
 function renderControls() {
-  const sourceLocked = state.started || state.ending;
+  const controlsLocked = state.started || state.ending || state.memoryProcessing;
+  const requiresSource = state.settings.conversationMode === "reading";
   const textOnly = elements.textOnlyMode.checked;
-  elements.pickBlockButton.disabled = sourceLocked;
-  elements.uploadButton.disabled = sourceLocked;
-  elements.startButton.disabled = sourceLocked || !state.source;
-  elements.textOnlyMode.disabled = sourceLocked;
+  elements.pickBlockButton.disabled = controlsLocked;
+  elements.uploadButton.disabled = controlsLocked;
+  elements.startButton.disabled = controlsLocked || (requiresSource && !state.source);
+  elements.textOnlyMode.disabled = controlsLocked;
   elements.muteButton.disabled = !state.started || state.ending || !state.microphoneActive;
   elements.muteButton.classList.toggle("is-hidden", textOnly);
   elements.callActions.classList.toggle("is-text-only", textOnly);
@@ -470,8 +709,12 @@ function renderControls() {
 }
 
 function renderStatus() {
+  const companion = (state.activeMode || state.settings.conversationMode) === "companion";
+  const readyHint = companion
+    ? (state.settings.companionMemoryEnabled ? "不用準備來源，頁師傅會帶著你們的長期記憶來陪你" : "不用準備來源，隨時可以直接聊聊")
+    : (state.source ? "可以開始針對目前來源對談" : "加入內容後即可開始語音或文字對談");
   const statusCopy = {
-    ready: ["準備好了", state.source ? "可以開始針對目前來源對談" : "加入內容後即可開始語音或文字對談"],
+    ready: ["準備好了", readyHint],
     permission: ["等待麥克風授權", "請在 Chrome 提示中允許 PageAsk 使用麥克風"],
     connecting: ["正在連線", "正在建立 Gemini Live 工作階段"],
     reconnecting: ["正在重新連線", "保留目前工作階段，請稍候"],
@@ -480,7 +723,8 @@ function renderStatus() {
       : [state.muted ? "麥克風已靜音" : "正在聽你說", state.muted ? "可用文字繼續提問" : "你可以自然說話，隨時插話"],
     speaking: ["頁師傅 正在回答", "開口即可打斷目前回應"],
     failed: ["連線失敗", "請檢查設定、網路與免費配額"],
-    stopped: ["對談已結束", "可以保留來源再開始一場新對談"],
+    "processing-memory": ["正在整理記憶", "從這次對話挑出值得長期記住的事"],
+    stopped: ["對談已結束", companion ? "隨時可以再開始一場陪伴對談" : "可以保留來源再開始一場新對談"],
   };
   const [title, hint] = statusCopy[state.status] || statusCopy.ready;
   elements.voiceStatus.textContent = title;
@@ -499,7 +743,10 @@ function renderTranscript() {
     const title = document.createElement("span");
     title.textContent = "逐字稿";
     const copy = document.createElement("p");
-    copy.textContent = "開始後，你和 頁師傅 的即時字幕會留在這裡；關閉面板後不會保存。";
+    const companion = (state.activeMode || state.settings.conversationMode) === "companion";
+    copy.textContent = companion && state.settings.companionMemoryEnabled
+      ? "逐字稿只用於會後整理長期記憶，整理完成即捨棄；關閉面板不會保存。"
+      : "開始後，你和 頁師傅 的即時字幕會留在這裡；關閉面板後不會保存。";
     empty.append(title, copy);
     elements.transcript.appendChild(empty);
     return;
@@ -520,6 +767,8 @@ function renderTranscript() {
 function renderTools() {
   const events = [...state.tools.values()];
   elements.toolFeed.classList.toggle("is-hidden", events.length === 0);
+  const loading = events.some((event) => event.status === "loading");
+  elements.toolFeedState.textContent = loading ? "查詢中…" : `${events.length} 項結果`;
   elements.toolItems.replaceChildren();
   for (const event of events) {
     const item = document.createElement("div");
@@ -555,7 +804,7 @@ function setStatus(status) {
 function connectionLabel(status) {
   return ({
     ready: "準備中", permission: "等待授權", connecting: "連線中", reconnecting: "重連中",
-    listening: "已連線", speaking: "回答中", failed: "錯誤", stopped: "已結束",
+    listening: "已連線", speaking: "回答中", "processing-memory": "整理中", failed: "錯誤", stopped: "已結束",
   })[status] || status;
 }
 

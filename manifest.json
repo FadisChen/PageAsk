@@ -3,7 +3,7 @@
   "minimum_chrome_version": "116",
   "name": "PageAsk",
   "version": "1.0.0",
-  "description": "針對網頁選取內容或檔案，使用 Gemini Live 即時語音與文字對談。",
+  "description": "用 Gemini Live 閱讀網頁與檔案，或直接進行具長期記憶的陪伴對談。",
   "permissions": [
     "storage",
     "sidePanel",

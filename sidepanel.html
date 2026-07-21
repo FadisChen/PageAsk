@@ -16,7 +16,18 @@
       <button class="icon-button" id="settingsButton" type="button" aria-label="開啟設定" title="設定">⚙</button>
     </header>
 
-    <section class="source-section" aria-labelledby="sourceHeading">
+    <nav class="mode-switch" aria-label="對談模式">
+      <button class="mode-option" id="readingModeButton" type="button" aria-pressed="true">
+        <span>READING</span>
+        <strong>閱讀</strong>
+      </button>
+      <button class="mode-option" id="companionModeButton" type="button" aria-pressed="false">
+        <span>COMPANION</span>
+        <strong>陪伴</strong>
+      </button>
+    </nav>
+
+    <section class="source-section" id="sourceSection" aria-labelledby="sourceHeading">
       <div class="section-heading">
         <div>
           <p class="section-index">01</p>
@@ -83,10 +94,13 @@
         </div>
       </div>
 
-      <div class="tool-feed is-hidden" id="toolFeed" aria-live="polite">
-        <p class="tool-feed-title">GROUNDING</p>
-        <div id="toolItems"></div>
-      </div>
+      <details class="tool-feed is-hidden" id="toolFeed">
+        <summary>
+          <span class="tool-feed-title">GROUNDING</span>
+          <span class="tool-feed-state" id="toolFeedState">0 項結果</span>
+        </summary>
+        <div class="tool-items" id="toolItems" aria-live="polite"></div>
+      </details>
 
       <form class="composer" id="composer">
         <label class="sr-only" for="textInput">輸入訊息</label>
@@ -121,13 +135,60 @@
           <select id="settingsVoiceName"></select>
         </div>
 
+        <section class="dialog-section" aria-labelledby="companionSettingsTitle">
+          <div class="dialog-section-heading">
+            <span>COMPANION · 03</span>
+            <h3 id="companionSettingsTitle">陪伴人格與記憶</h3>
+          </div>
+
+          <div class="dialog-field">
+            <label for="settingsCompanionPrompt">陪伴模式 system prompt</label>
+            <p>你可以調整頁師傅的人格與互動風格；繁中、安全與記憶邊界會由程式固定附加。</p>
+            <textarea id="settingsCompanionPrompt" maxlength="12000" rows="7"></textarea>
+            <div class="field-actions">
+              <button class="text-button" id="settingsResetPromptButton" type="button">恢復預設人格</button>
+            </div>
+          </div>
+
+          <label class="switch-row" for="settingsMemoryEnabled">
+            <span><strong>啟用長期記憶</strong><small>會後整理值得保留的資訊，下次陪伴對談再使用。</small></span>
+            <input id="settingsMemoryEnabled" type="checkbox">
+          </label>
+
+          <div class="dialog-field memory-budget-field">
+            <label for="settingsMemoryBudget">記憶預算（tokens）</label>
+            <input id="settingsMemoryBudget" type="number" min="200" max="100000" step="100">
+          </div>
+
+          <div class="memory-manager">
+            <div class="memory-manager-heading">
+              <div>
+                <span class="memory-eyebrow">LONG-TERM MEMORY</span>
+                <strong id="memoryUsage">0 條 · 約 0 / 3,000 tokens</strong>
+              </div>
+              <button class="button button-secondary button-small" id="newMemoryButton" type="button">＋ 新增</button>
+            </div>
+
+            <div class="new-memory-editor is-hidden" id="newMemoryEditor">
+              <textarea id="newMemoryContent" maxlength="4000" rows="3" placeholder="例如：使用者養了一隻叫 Mochi 的貓"></textarea>
+              <label class="memory-lock-toggle"><input id="newMemoryLocked" type="checkbox" checked> 鎖定這條記憶</label>
+              <div class="memory-editor-actions">
+                <button class="button button-primary button-small" id="saveNewMemoryButton" type="button">儲存記憶</button>
+                <button class="button button-secondary button-small" id="cancelNewMemoryButton" type="button">取消</button>
+              </div>
+            </div>
+
+            <div class="memory-list" id="memoryList"></div>
+          </div>
+        </section>
+
         <div class="dialog-test-row">
           <button class="button button-secondary" id="settingsTestButton" type="button">測試並儲存</button>
           <span class="test-status" id="settingsTestStatus" role="status"></span>
         </div>
 
         <aside class="dialog-privacy">
-          網頁內容、檔案文字與對談會直接送往 Google；免費層內容可能用於改善 Google 產品。
+          網頁內容、檔案文字、陪伴對談與會後記憶整理會直接送往 Google。長期記憶未加密保存在這個 Chrome 使用者設定檔。
         </aside>
       </div>
 
