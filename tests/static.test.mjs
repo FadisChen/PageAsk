@@ -37,6 +37,7 @@ test("production source contains no unapproved models or fallback providers", as
   assert.deepEqual([...new Set(modelNames)].sort(), [
     "gemini-2.5-flash",
     "gemini-2.5-flash-native-audio-preview-12-2025",
+    "gemini-3.1-flash-live-preview",
   ]);
   assert.doesNotMatch(source, /tavily|googleMaps|<all_urls>/i);
 });
@@ -64,6 +65,8 @@ test("settings stay inside the side panel dialog", async () => {
   const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
   const script = await readFile(path.join(root, "sidepanel.js"), "utf8");
   assert.match(html, /<dialog[^>]+id="settingsDialog"/);
+  assert.match(html, /id="settingsLiveModel"/);
+  assert.match(html, /id="settingsThinkingLevel"[^>]+type="range"/);
   assert.match(script, /settingsDialog\.showModal\(\)/);
   assert.doesNotMatch(script, /openOptionsPage/);
 });
@@ -105,6 +108,14 @@ test("text-only mode starts Live without requesting microphone capture", async (
   assert.match(audio, /if \(captureMicrophone\) \{/);
   assert.match(audio, /createScriptProcessor\(1024, 1, 1\)/);
   assert.match(panel, /requestAnimationFrame\(\(\) => \{/);
+});
+
+test("options page exposes the same Live thinking slider", async () => {
+  const html = await readFile(path.join(root, "options.html"), "utf8");
+  const script = await readFile(path.join(root, "options.js"), "utf8");
+  assert.match(html, /id="liveThinkingLevel"[^>]+type="range"/);
+  assert.match(script, /liveThinkingLevel/);
+  assert.match(script, /describeLiveThinking/);
 });
 
 test("companion mode can start without a source and exposes local memory controls", async () => {

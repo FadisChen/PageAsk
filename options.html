@@ -11,7 +11,7 @@
     <header class="options-hero">
       <p class="eyebrow">PAGEASK · PREFERENCES</p>
       <h1>讓閱讀有一個<br>可以交談的聲音。</h1>
-      <p>PageAsk 只連線至你設定的 Gemini API。模型固定使用免費層支援的 Live 與 Flash，不會自動切換付費服務。</p>
+      <p>PageAsk 只連線至你設定的 Gemini API。Live 模型由你選擇，不會自動切換付費服務。</p>
     </header>
 
     <form class="settings-sheet" id="settingsForm">
@@ -35,8 +35,22 @@
       <section class="settings-section">
         <div class="settings-number">02</div>
         <div class="settings-content">
-          <h2>對談聲線</h2>
-          <p>聲線會在下一場 Live 對談開始時套用。</p>
+          <h2>Live 模型與聲線</h2>
+          <p>模型與聲線會在下一場 Live 對談開始時套用。</p>
+          <label for="liveModel">Gemini Live 模型</label>
+          <select id="liveModel" name="liveModel"></select>
+          <p>2.5 支援非同步搜尋；3.1 通常延遲較低，但搜尋時會等待工具結果。</p>
+          <div class="thinking-field">
+            <label class="thinking-label" for="liveThinkingLevel">
+              <span>思考強度</span>
+              <output id="thinkingValue" for="liveThinkingLevel">自動</output>
+            </label>
+            <input class="thinking-range" id="liveThinkingLevel" name="liveThinkingLevel" type="range" min="0" max="4" step="1" value="0">
+            <div class="thinking-scale" aria-hidden="true">
+              <span>自動</span><span>Minimal</span><span>Low</span><span>Medium</span><span>High</span>
+            </div>
+            <p class="thinking-description" id="thinkingHint"></p>
+          </div>
           <label for="voiceName">Gemini 原生聲線</label>
           <select id="voiceName" name="voiceName"></select>
         </div>

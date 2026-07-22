@@ -1,4 +1,49 @@
-export const LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
+export const LIVE_MODEL_OPTIONS = Object.freeze([
+  Object.freeze({
+    id: "gemini-2.5-flash-native-audio-preview-12-2025",
+    label: "Gemini 2.5（非同步工具）",
+    asyncToolCalling: true,
+  }),
+  Object.freeze({
+    id: "gemini-3.1-flash-live-preview",
+    label: "Gemini 3.1（低延遲）",
+    asyncToolCalling: false,
+  }),
+]);
+
+export const DEFAULT_LIVE_MODEL = LIVE_MODEL_OPTIONS[0].id;
+
+export function getLiveModelOption(id) {
+  return LIVE_MODEL_OPTIONS.find((option) => option.id === id) || LIVE_MODEL_OPTIONS[0];
+}
+
+export const LIVE_THINKING_OPTIONS = Object.freeze([
+  Object.freeze({ id: "AUTO", label: "自動", thinkingBudget: null }),
+  Object.freeze({ id: "MINIMAL", label: "Minimal", thinkingBudget: 512 }),
+  Object.freeze({ id: "LOW", label: "Low", thinkingBudget: 1024 }),
+  Object.freeze({ id: "MEDIUM", label: "Medium", thinkingBudget: 4096 }),
+  Object.freeze({ id: "HIGH", label: "High", thinkingBudget: 8192 }),
+]);
+
+export const DEFAULT_LIVE_THINKING_LEVEL = LIVE_THINKING_OPTIONS[0].id;
+
+export function getLiveThinkingOption(id) {
+  return LIVE_THINKING_OPTIONS.find((option) => option.id === id) || LIVE_THINKING_OPTIONS[0];
+}
+
+export function describeLiveThinking(modelId, thinkingId) {
+  const model = getLiveModelOption(modelId);
+  const thinking = getLiveThinkingOption(thinkingId);
+  if (thinking.id === "AUTO") {
+    return model.asyncToolCalling
+      ? "2.5 使用 dynamic thinking，由模型自動調整思考量。"
+      : "3.1 使用 Live API 預設的 minimal 思考強度。";
+  }
+  return model.asyncToolCalling
+    ? `2.5 thinkingBudget：${thinking.thinkingBudget.toLocaleString()} tokens`
+    : `3.1 thinkingLevel：${thinking.id.toLowerCase()}`;
+}
+
 export const GROUNDING_MODEL = "gemini-2.5-flash";
 
 export const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -18,6 +63,8 @@ export const DEFAULT_COMPANION_SYSTEM_PROMPT = `你是「小書僮」，一位�
 
 export const DEFAULT_SETTINGS = Object.freeze({
   apiKey: "",
+  liveModel: DEFAULT_LIVE_MODEL,
+  liveThinkingLevel: DEFAULT_LIVE_THINKING_LEVEL,
   voiceName: "Kore",
   conversationMode: "reading",
   companionSystemPrompt: DEFAULT_COMPANION_SYSTEM_PROMPT,

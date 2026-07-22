@@ -290,6 +290,27 @@ h1, h2, h3, p { margin-top: 0; }
 .dialog-field > p { margin: 0 0 10px; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .dialog-field input, .dialog-field select { width: 100%; min-height: 44px; padding: 9px 11px; border: 1px solid var(--rule); border-radius: 4px; outline: none; color: var(--ink); background: var(--sheet); }
 .dialog-field input:focus, .dialog-field select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(36,107,97,.1); }
+.thinking-field { margin-bottom: 18px; }
+.thinking-label { display: flex !important; align-items: center; justify-content: space-between; gap: 12px; }
+.thinking-label output { color: var(--green); font-size: 12px; letter-spacing: 0; text-transform: none; }
+.dialog-field input.thinking-range, .settings-content input.thinking-range {
+  width: 100%;
+  min-height: 0;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  accent-color: var(--green);
+  cursor: pointer;
+}
+.dialog-field input.thinking-range:focus, .settings-content input.thinking-range:focus { box-shadow: none; }
+.dialog-field input.thinking-range:focus-visible, .settings-content input.thinking-range:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+.thinking-scale { display: grid; grid-template-columns: repeat(5, 1fr); color: var(--muted); }
+.thinking-scale span { font-size: 9px; text-align: center; }
+.thinking-scale span:first-child { text-align: left; }
+.thinking-scale span:last-child { text-align: right; }
+.dialog-field > .thinking-description, .settings-content .thinking-description { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .dialog-test-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; }
 .dialog-privacy { padding: 12px 14px; border-left: 3px solid var(--gold); color: #625233; background: #f3e6c8; font-size: 11px; line-height: 1.6; }
 .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 15px 20px 20px; border-top: 1px solid var(--rule); }

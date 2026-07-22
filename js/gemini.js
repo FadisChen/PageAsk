@@ -1,10 +1,18 @@
-import { API_BASE, GROUNDING_MODEL, LIVE_MODEL, MAX_MEMORY_CHARS, WS_BASE } from "./constants.js";
+import {
+  API_BASE,
+  DEFAULT_LIVE_MODEL,
+  DEFAULT_LIVE_THINKING_LEVEL,
+  getLiveModelOption,
+  getLiveThinkingOption,
+  GROUNDING_MODEL,
+  MAX_MEMORY_CHARS,
+  WS_BASE,
+} from "./constants.js";
 import { mergePartial } from "./transcript.js";
 
 export const GROUNDING_FUNCTION_DECLARATION = Object.freeze({
   name: "ground_with_google_search",
   description: "當問題需要目前、近期或來源之外的可驗證外部資訊時，使用 Google Search 查詢。不要用於來源已經能回答的內容。",
-  behavior: "NON_BLOCKING",
   parameters: {
     type: "OBJECT",
     properties: {
@@ -78,24 +86,32 @@ function sanitizeMemoryBoundary(value) {
 }
 
 
-export async function checkRequiredModels(apiKey, fetchImpl = fetch) {
-  const models = [LIVE_MODEL, GROUNDING_MODEL];
-  await Promise.all(models.map(async (model) => {
-    const response = await fetchImpl(`${API_BASE}/models/${encodeURIComponent(model)}`, {
+export async function checkRequiredModels(apiKey, {
+  liveModel = DEFAULT_LIVE_MODEL,
+  fetchImpl = fetch,
+} = {}) {
+  const selectedLiveModel = getLiveModelOption(liveModel).id;
+  const models = [
+    { id: selectedLiveModel, requiredMethod: "bidiGenerateContent" },
+    { id: GROUNDING_MODEL, requiredMethod: "generateContent" },
+  ];
+  await Promise.all(models.map(async ({ id, requiredMethod }) => {
+    const response = await fetchImpl(`${API_BASE}/models/${encodeURIComponent(id)}`, {
       headers: { "x-goog-api-key": apiKey },
     });
     const data = await readJson(response);
-    if (!response.ok) throw httpErrorFromData(response, data, model);
-    const requiredMethod = model === LIVE_MODEL ? "bidiGenerateContent" : "generateContent";
+    if (!response.ok) throw httpErrorFromData(response, data, id);
     const methods = Array.isArray(data.supportedGenerationMethods) ? data.supportedGenerationMethods : [];
     if (methods.length && !methods.some((method) => method.toLowerCase() === requiredMethod.toLowerCase())) {
-      throw new Error(`${model} 不支援必要的 ${requiredMethod} 方法。`);
+      throw new Error(`${id} 不支援必要的 ${requiredMethod} 方法。`);
     }
   }));
   return true;
 }
 
 export function probeLiveModel(apiKey, {
+  liveModel = DEFAULT_LIVE_MODEL,
+  liveThinkingLevel = DEFAULT_LIVE_THINKING_LEVEL,
   voiceName = "Kore",
   WebSocketImpl = globalThis.WebSocket,
   timeoutMs = 10000,
@@ -120,7 +136,7 @@ export function probeLiveModel(apiKey, {
     }
 
     socket.onopen = () => {
-      const session = new LiveSession({ apiKey, voiceName, systemInstruction });
+      const session = new LiveSession({ apiKey, liveModel, liveThinkingLevel, voiceName, systemInstruction });
       socket.send(JSON.stringify(session.setupMessage()));
     };
     socket.onmessage = async (event) => {
@@ -270,21 +286,24 @@ export function parseGroundingResponse(data) {
   return { answer, sources };
 }
 
-export function createGroundingFunctionResponse(call, result) {
+export function createGroundingFunctionResponse(call, result, asyncToolCalling = true) {
+  const response = {
+    result: result.answer,
+    sources: result.sources,
+  };
+  if (asyncToolCalling) response.scheduling = "WHEN_IDLE";
   return {
     id: call.id,
     name: call.name,
-    response: {
-      result: result.answer,
-      sources: result.sources,
-      scheduling: "WHEN_IDLE",
-    },
+    response,
   };
 }
 
 export class LiveSession {
   constructor(config, callbacks = {}) {
     this.config = config;
+    this.modelOption = getLiveModelOption(config.liveModel);
+    this.thinkingOption = getLiveThinkingOption(config.liveThinkingLevel);
     this.callbacks = callbacks;
     this.socket = null;
     this.ready = false;
@@ -335,22 +354,31 @@ export class LiveSession {
   }
 
   setupMessage() {
+    const groundingDeclaration = this.modelOption.asyncToolCalling
+      ? { ...GROUNDING_FUNCTION_DECLARATION, behavior: "NON_BLOCKING" }
+      : GROUNDING_FUNCTION_DECLARATION;
+    const generationConfig = {
+      responseModalities: ["AUDIO"],
+      speechConfig: {
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: this.config.voiceName || "Kore" } },
+      },
+    };
+    if (this.thinkingOption.id !== "AUTO") {
+      generationConfig.thinkingConfig = this.modelOption.asyncToolCalling
+        ? { thinkingBudget: this.thinkingOption.thinkingBudget }
+        : { thinkingLevel: this.thinkingOption.id };
+    }
     return {
       setup: {
-        model: `models/${LIVE_MODEL}`,
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: this.config.voiceName || "Kore" } },
-          },
-        },
+        model: `models/${this.modelOption.id}`,
+        generationConfig,
         systemInstruction: { parts: [{ text: this.config.systemInstruction }] },
         realtimeInputConfig: { automaticActivityDetection: { disabled: false } },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         contextWindowCompression: { slidingWindow: {} },
         sessionResumption: this.resumptionHandle ? { handle: this.resumptionHandle } : {},
-        tools: [{ functionDeclarations: [GROUNDING_FUNCTION_DECLARATION] }],
+        tools: [{ functionDeclarations: [groundingDeclaration] }],
       },
     };
   }
@@ -457,7 +485,11 @@ export class LiveSession {
 
   async handleToolCall(call) {
     if (call.name !== GROUNDING_FUNCTION_DECLARATION.name) {
-      this.queueToolResponse({ id: call.id, name: call.name, response: { result: "不支援的工具。", scheduling: "WHEN_IDLE" } });
+      this.queueToolResponse(createGroundingFunctionResponse(
+        call,
+        { answer: "不支援的工具。", sources: [] },
+        this.modelOption.asyncToolCalling,
+      ));
       return;
     }
     const query = typeof call.args?.query === "string" ? call.args.query.trim() : "";
@@ -469,12 +501,16 @@ export class LiveSession {
       const result = await runGrounding(query, { apiKey: this.config.apiKey, signal: controller.signal });
       if (this.stopped || runId !== this.runId || controller.signal.aborted) return;
       this.callbacks.onGrounding?.({ id: call.id, query, status: "complete", result });
-      this.queueToolResponse(createGroundingFunctionResponse(call, result));
+      this.queueToolResponse(createGroundingFunctionResponse(call, result, this.modelOption.asyncToolCalling));
     } catch (error) {
       if (controller.signal.aborted || runId !== this.runId) return;
       const message = friendlyApiError(error);
       this.callbacks.onGrounding?.({ id: call.id, query, status: "error", error: message });
-      this.queueToolResponse(createGroundingFunctionResponse(call, { answer: `查詢失敗：${message}`, sources: [] }));
+      this.queueToolResponse(createGroundingFunctionResponse(
+        call,
+        { answer: `查詢失敗：${message}`, sources: [] },
+        this.modelOption.asyncToolCalling,
+      ));
     } finally {
       this.toolJobs.delete(call.id);
     }
