@@ -100,13 +100,18 @@ test("text-only mode starts Live without requesting microphone capture", async (
   const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
   const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
   const audio = await readFile(path.join(root, "js", "audio.js"), "utf8");
+  const worklet = await readFile(path.join(root, "js", "audio-capture-worklet.js"), "utf8");
   assert.match(html, /id="textOnlyMode"/);
   assert.match(panel, /captureMicrophone: useMicrophone/);
   assert.match(panel, /文字對談已連線/);
   assert.match(panel, /muteButton\.classList\.toggle\("is-hidden", textOnly\)/);
   assert.match(panel, /callActions\.classList\.toggle\("is-text-only", textOnly\)/);
   assert.match(audio, /if \(captureMicrophone\) \{/);
-  assert.match(audio, /createScriptProcessor\(1024, 1, 1\)/);
+  assert.match(audio, /audioWorklet\.addModule/);
+  assert.match(audio, /new AudioWorkletNode/);
+  assert.doesNotMatch(audio, /createScriptProcessor|onaudioprocess/);
+  assert.match(worklet, /registerProcessor\("pageask-audio-capture"/);
+  assert.match(worklet, /const CAPTURE_SIZE = 1024/);
   assert.match(panel, /requestAnimationFrame\(\(\) => \{/);
 });
 

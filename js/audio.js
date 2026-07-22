@@ -32,10 +32,17 @@ export class BrowserAudioEngine {
         video: false,
       });
       this.source = this.context.createMediaStreamSource(this.stream);
-      this.processor = this.context.createScriptProcessor(1024, 1, 1);
+      await this.context.audioWorklet.addModule(new URL("./audio-capture-worklet.js", import.meta.url));
+      this.processor = new AudioWorkletNode(this.context, "pageask-audio-capture", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 1,
+        channelCountMode: "explicit",
+      });
       this.silentGain = this.context.createGain();
       this.silentGain.gain.value = 0;
-      this.processor.onaudioprocess = (event) => this.capture(event.inputBuffer.getChannelData(0));
+      this.processor.port.onmessage = (event) => this.capture(event.data);
       this.source.connect(this.processor);
       this.processor.connect(this.silentGain);
       this.silentGain.connect(this.context.destination);
@@ -92,7 +99,7 @@ export class BrowserAudioEngine {
     this.running = false;
     this.flushPlayback();
     if (this.processor) {
-      this.processor.onaudioprocess = null;
+      this.processor.port.onmessage = null;
       try { this.processor.disconnect(); } catch { /* Already disconnected. */ }
     }
     try { this.source?.disconnect(); } catch { /* Already disconnected. */ }
