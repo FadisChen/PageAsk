@@ -11,10 +11,11 @@ export const LIVE_MODEL_OPTIONS = Object.freeze([
   }),
 ]);
 
-export const DEFAULT_LIVE_MODEL = LIVE_MODEL_OPTIONS[0].id;
+export const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 
 export function getLiveModelOption(id) {
-  return LIVE_MODEL_OPTIONS.find((option) => option.id === id) || LIVE_MODEL_OPTIONS[0];
+  return LIVE_MODEL_OPTIONS.find((option) => option.id === id)
+    || LIVE_MODEL_OPTIONS.find((option) => option.id === DEFAULT_LIVE_MODEL);
 }
 
 export const LIVE_THINKING_OPTIONS = Object.freeze([

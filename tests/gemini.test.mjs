@@ -34,7 +34,7 @@ const LIVE_2_5 = LIVE_MODEL_OPTIONS[0].id;
 const LIVE_3_1 = LIVE_MODEL_OPTIONS[1].id;
 
 test("production model allowlist contains only the planned free-tier models", () => {
-  assert.equal(DEFAULT_LIVE_MODEL, "gemini-2.5-flash-native-audio-preview-12-2025");
+  assert.equal(DEFAULT_LIVE_MODEL, "gemini-3.1-flash-live-preview");
   assert.equal(DEFAULT_LIVE_THINKING_LEVEL, "AUTO");
   assert.deepEqual(LIVE_MODEL_OPTIONS.map((option) => option.id), [
     "gemini-2.5-flash-native-audio-preview-12-2025",
@@ -273,6 +273,18 @@ test("stopped live sessions do not retain microphone audio", () => {
   session.sendAudio(new Uint8Array([1, 2, 3]));
   assert.equal(session.audioBufferBytes, 0);
   assert.deepEqual(session.audioBuffer, []);
+});
+
+test("live user transcription converts simplified Chinese before display", () => {
+  const received = [];
+  const session = new LiveSession(
+    { apiKey: "test", systemInstruction: "測試" },
+    { onUserTranscript: (text) => received.push(text) },
+  );
+  session.handleMessage({
+    serverContent: { inputTranscription: { text: "我喜欢看电视剧" } },
+  });
+  assert.deepEqual(received, ["我喜歡看電視劇"]);
 });
 
 test("generationComplete does not finalize a Live turn before turnComplete", async () => {

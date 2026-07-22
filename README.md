@@ -30,8 +30,8 @@ PageAsk 是一個 Chrome 116+ Manifest V3 擴充功能。它會把使用者選�
 
 ## 模型與免費層
 
-- Live 預設：`gemini-2.5-flash-native-audio-preview-12-2025`（支援 `NON_BLOCKING` 非同步工具呼叫）
-- Live 可選：`gemini-3.1-flash-live-preview`（低延遲、同步工具呼叫）
+- Live 預設：`gemini-3.1-flash-live-preview`（低延遲、同步工具呼叫）
+- Live 可選：`gemini-2.5-flash-native-audio-preview-12-2025`（支援 `NON_BLOCKING` 非同步工具呼叫）
 - Grounding：`gemini-2.5-flash`
 
 PageAsk 會保存使用者選擇，並在下一場對談建立新 Live session 時套用；不會在通話中途或發生錯誤時自動改用另一個模型。2.5 的搜尋工具以 `NON_BLOCKING` 執行，結果用 `WHEN_IDLE` 排程；3.1 會等待搜尋工具回傳後再繼續回答。

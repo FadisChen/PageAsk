@@ -9,6 +9,7 @@ import {
   WS_BASE,
 } from "./constants.js";
 import { mergePartial } from "./transcript.js";
+import { toTraditionalChinese } from "./traditional-chinese.js";
 
 export const GROUNDING_FUNCTION_DECLARATION = Object.freeze({
   name: "ground_with_google_search",
@@ -455,7 +456,8 @@ export class LiveSession {
         }
       }
       if (receivedAudio) this.callbacks.onStatus?.("speaking");
-      if (content.inputTranscription?.text) this.callbacks.onUserTranscript?.(content.inputTranscription.text);
+      const inputText = toTraditionalChinese(content.inputTranscription?.text);
+      if (inputText) this.callbacks.onUserTranscript?.(inputText);
       if (content.outputTranscription?.text) {
         this.modelTranscript = mergePartial(this.modelTranscript, content.outputTranscription.text);
         this.callbacks.onModelTranscript?.(content.outputTranscription.text);

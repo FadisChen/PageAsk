@@ -28,8 +28,8 @@ test("legacy settings receive companion defaults without losing existing values"
   assert.equal(settings.companionMemoryBudgetTokens, 3000);
 });
 
-test("supported Live model is preserved and unknown values fall back to 2.5", () => {
-  assert.equal(cleanSettings({ liveModel: LIVE_MODEL_OPTIONS[1].id }).liveModel, LIVE_MODEL_OPTIONS[1].id);
+test("supported Live model is preserved and unknown values fall back to 3.1", () => {
+  assert.equal(cleanSettings({ liveModel: LIVE_MODEL_OPTIONS[0].id }).liveModel, LIVE_MODEL_OPTIONS[0].id);
   assert.equal(cleanSettings({ liveModel: "unknown-live-model" }).liveModel, DEFAULT_LIVE_MODEL);
 });
 
