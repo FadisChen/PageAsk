@@ -13,14 +13,17 @@ import {
   checkRequiredModels,
   cleanGeneratedMemories,
   createGroundingFunctionResponse,
+  createYoutubeAnalysisFunctionResponse,
   extractMemories,
   friendlyApiError,
   GROUNDING_FUNCTION_DECLARATION,
+  YOUTUBE_FUNCTION_DECLARATION,
   appearsIncomplete,
   LiveSession,
   parseGroundingResponse,
   probeLiveModel,
   runGrounding,
+  runYoutubeVideoAnalysis,
 } from "../js/gemini.js";
 
 const source = {
@@ -116,8 +119,13 @@ test("live setup enables audio, transcripts, VAD, compression, resumption, and o
   assert.deepEqual(setup.inputAudioTranscription, {});
   assert.deepEqual(setup.outputAudioTranscription, {});
   assert.deepEqual(setup.contextWindowCompression, { slidingWindow: {} });
-  assert.equal(setup.tools[0].functionDeclarations.length, 1);
+  assert.equal(setup.tools[0].functionDeclarations.length, 2);
+  assert.deepEqual(
+    setup.tools[0].functionDeclarations.map((declaration) => declaration.name),
+    [GROUNDING_FUNCTION_DECLARATION.name, YOUTUBE_FUNCTION_DECLARATION.name],
+  );
   assert.equal(setup.tools[0].functionDeclarations[0].behavior, "NON_BLOCKING");
+  assert.equal(setup.tools[0].functionDeclarations[1].behavior, "NON_BLOCKING");
   assert.equal("thinkingConfig" in setup.generationConfig, false);
 });
 
@@ -130,7 +138,9 @@ test("3.1 live setup uses the selected model and synchronous grounding", () => {
   });
   const setup = session.setupMessage().setup;
   assert.equal(setup.model, `models/${LIVE_3_1}`);
+  assert.equal(setup.tools[0].functionDeclarations.length, 2);
   assert.equal("behavior" in setup.tools[0].functionDeclarations[0], false);
+  assert.equal("behavior" in setup.tools[0].functionDeclarations[1], false);
   assert.equal("thinkingConfig" in setup.generationConfig, false);
 });
 
@@ -171,6 +181,79 @@ test("synchronous grounding response omits scheduling", () => {
     false,
   );
   assert.equal("scheduling" in response.response, false);
+});
+
+test("youtube analysis tool only requires a url", () => {
+  assert.equal(YOUTUBE_FUNCTION_DECLARATION.name, "analyze_youtube_video");
+  assert.deepEqual(YOUTUBE_FUNCTION_DECLARATION.parameters.required, ["url"]);
+});
+
+test("youtube analysis function response waits until the model is idle", () => {
+  const response = createYoutubeAnalysisFunctionResponse(
+    { id: "call-1", name: YOUTUBE_FUNCTION_DECLARATION.name },
+    { answer: "影片摘要內容" },
+    true,
+  );
+  assert.equal(response.response.scheduling, "WHEN_IDLE");
+  assert.equal(response.response.result, "影片摘要內容");
+});
+
+test("synchronous youtube analysis response omits scheduling", () => {
+  const response = createYoutubeAnalysisFunctionResponse(
+    { id: "call-1", name: YOUTUBE_FUNCTION_DECLARATION.name },
+    { answer: "影片摘要內容" },
+    false,
+  );
+  assert.equal("scheduling" in response.response, false);
+});
+
+test("youtube analysis request sends the video as file_data with an optional time range", async () => {
+  let requestedUrl = "";
+  let requestedBody;
+  const fetchImpl = async (url, options) => {
+    requestedUrl = url;
+    requestedBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: "影片摘要" }] } }] }),
+    };
+  };
+  const result = await runYoutubeVideoAnalysis("https://www.youtube.com/watch?v=xxxx", {
+    question: "重點是什麼？",
+    startOffsetSeconds: 30,
+    endOffsetSeconds: 90,
+    apiKey: "key",
+    fetchImpl,
+  });
+  assert.match(requestedUrl, new RegExp(`${GROUNDING_MODEL}:generateContent$`));
+  const [videoPart, textPart] = requestedBody.contents[0].parts;
+  assert.deepEqual(videoPart.file_data, { file_uri: "https://www.youtube.com/watch?v=xxxx" });
+  assert.deepEqual(videoPart.video_metadata, { start_offset: "30s", end_offset: "90s" });
+  assert.equal(textPart.text, "重點是什麼？");
+  assert.equal(result.answer, "影片摘要");
+});
+
+test("youtube analysis request omits video_metadata and falls back to a default question", async () => {
+  let requestedBody;
+  const fetchImpl = async (_url, options) => {
+    requestedBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: "影片摘要" }] } }] }),
+    };
+  };
+  await runYoutubeVideoAnalysis("https://youtu.be/xxxx", { apiKey: "key", fetchImpl });
+  const [videoPart, textPart] = requestedBody.contents[0].parts;
+  assert.equal("video_metadata" in videoPart, false);
+  assert.equal(textPart.text, "請提供這支影片的摘要與重點。");
+});
+
+test("youtube analysis rejects an empty answer", async () => {
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ candidates: [] }) });
+  await assert.rejects(
+    runYoutubeVideoAnalysis("https://youtu.be/xxxx", { apiKey: "key", fetchImpl }),
+    /沒有回傳可用的影片分析內容/,
+  );
 });
 
 test("grounding metadata is converted to unique HTTPS sources", () => {

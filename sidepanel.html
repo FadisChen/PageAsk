@@ -13,7 +13,10 @@
         <p class="eyebrow">READ · ASK · LISTEN</p>
         <h1>小書僮</h1>
       </div>
-      <button class="icon-button" id="settingsButton" type="button" aria-label="開啟設定" title="設定">⚙</button>
+      <div class="masthead-actions">
+        <button class="icon-button" id="historyButton" type="button" aria-label="開啟歷史紀錄" title="歷史紀錄">🕘</button>
+        <button class="icon-button" id="settingsButton" type="button" aria-label="開啟設定" title="設定">⚙</button>
+      </div>
     </header>
 
     <nav class="mode-switch" aria-label="對談模式">
@@ -215,6 +218,22 @@
         <button class="button button-primary" type="submit">儲存設定</button>
       </footer>
     </form>
+  </dialog>
+  <dialog class="settings-dialog" id="historyDialog" aria-labelledby="historyDialogTitle">
+    <div class="dialog-header">
+      <div>
+        <p class="eyebrow">PAGEASK · HISTORY</p>
+        <h2 id="historyDialogTitle">歷史紀錄</h2>
+      </div>
+      <button class="dialog-close" id="historyCloseButton" type="button" aria-label="關閉歷史紀錄">×</button>
+    </div>
+    <div class="dialog-body">
+      <div class="history-toolbar">
+        <input class="history-search-input" id="historySearchInput" type="search" placeholder="搜尋標題、人格或逐字稿內容…" aria-label="搜尋歷史紀錄">
+        <button class="button button-secondary button-small" id="exportAllHistoryButton" type="button">全部匯出</button>
+      </div>
+      <div class="history-list" id="historyList"></div>
+    </div>
   </dialog>
   <div class="toast-region" id="toastRegion" aria-live="assertive"></div>
   <script src="vendor/pdf.min.js"></script>

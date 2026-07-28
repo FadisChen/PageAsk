@@ -3,7 +3,9 @@ import {
   DEFAULT_SETTINGS,
   getLiveModelOption,
   getLiveThinkingOption,
+  HISTORY_KEY,
   MAX_COMPANION_PROMPT_CHARS,
+  MAX_HISTORY_ENTRY_CHARS,
   MAX_MEMORY_CHARS,
   MEMORIES_KEY,
   SETTINGS_KEY,
@@ -107,6 +109,72 @@ export function updateMemory(current, content, locked = current?.locked) {
   });
 }
 
+export async function loadHistory() {
+  const stored = await chrome.storage.local.get(HISTORY_KEY);
+  return cleanHistory(stored[HISTORY_KEY]);
+}
+
+export async function saveHistory(value) {
+  const history = cleanHistory(value);
+  await chrome.storage.local.set({ [HISTORY_KEY]: history });
+  return history;
+}
+
+export function cleanHistory(value) {
+  return Array.isArray(value) ? value.map(cleanHistoryEntry).filter(Boolean) : [];
+}
+
+export function cleanHistoryEntry(value) {
+  if (!value || typeof value !== "object") return null;
+  const rawTranscript = Array.isArray(value.transcript)
+    ? value.transcript.map(cleanTranscriptLine).filter(Boolean)
+    : [];
+  if (!rawTranscript.length) return null;
+  const originalChars = rawTranscript.reduce((sum, line) => sum + line.text.length, 0);
+  const { transcript, truncated } = capTranscript(rawTranscript, MAX_HISTORY_ENTRY_CHARS);
+  const now = Date.now();
+  return {
+    id: typeof value.id === "string" && value.id ? value.id : makeId(),
+    mode: value.mode === "companion" ? "companion" : "reading",
+    personaId: typeof value.personaId === "string" && value.personaId ? value.personaId : null,
+    personaName: cleanString(value.personaName, "", 120),
+    sourceTitles: Array.isArray(value.sourceTitles)
+      ? value.sourceTitles.map((title) => cleanString(title, "", 240)).filter(Boolean)
+      : [],
+    transcript,
+    startedAt: Number(value.startedAt) || now,
+    endedAt: Number(value.endedAt) || now,
+    pinned: Boolean(value.pinned),
+    truncated: Boolean(value.truncated) || truncated,
+    originalChars,
+    createdAt: Number(value.createdAt) || now,
+    updatedAt: Number(value.updatedAt) || Number(value.createdAt) || now,
+  };
+}
+
+function cleanTranscriptLine(value) {
+  if (!value || typeof value !== "object") return null;
+  const text = typeof value.text === "string" ? value.text.trim() : "";
+  if (!text) return null;
+  return { role: value.role === "model" ? "model" : "user", text };
+}
+
+function capTranscript(lines, limit) {
+  let used = 0;
+  const kept = [];
+  for (const line of lines) {
+    if (used + line.text.length > limit) break;
+    kept.push(line);
+    used += line.text.length;
+  }
+  if (!kept.length && lines.length) kept.push({ role: lines[0].role, text: lines[0].text.slice(0, limit) });
+  return { transcript: kept, truncated: kept.length < lines.length };
+}
+
+export function estimateStorageBytes(value) {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+
 export function estimateTokens(text) {
   let cjk = 0;
   let other = 0;
@@ -118,16 +186,16 @@ export function estimateTokens(text) {
   return cjk + Math.ceil(other / 4);
 }
 
-function cleanString(value, fallback, maxLength) {
+export function cleanString(value, fallback, maxLength) {
   if (typeof value !== "string") return fallback;
   return value.trim().slice(0, maxLength) || fallback;
 }
 
-function numberInRange(value, min, max, fallback) {
+export function numberInRange(value, min, max, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.round(number))) : fallback;
 }
 
-function makeId() {
+export function makeId() {
   return globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
 }

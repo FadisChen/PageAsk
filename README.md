@@ -15,6 +15,7 @@ PageAsk 是一個 Chrome 116+ Manifest V3 擴充功能。它會把使用者選�
 - Context window compression、session resumption 與 GoAway 重連
 - Live 模型可切換 Gemini 2.5（非同步工具）與 Gemini 3.1（低延遲同步工具）
 - Gemini 2.5 使用非阻塞 Google Search grounding，結果會在目前發言結束後回報
+- 對談中提供公開 YouTube 影片網址即可請 Gemini 直接摘要或回答影片內容（不擷取字幕，由 Gemini 端直接讀取畫面與音訊），可選填時間片段
 - 30 種 Gemini 原生聲線、Live 模型、五段思考強度與本機 API key 設定
 - Side panel 內設定對話框；模型測試會實際建立 Live session 並等待 `setupComplete`
 
@@ -66,4 +67,4 @@ cd PageAsk
 npm test
 ```
 
-測試涵蓋來源處理、檔案解析、PDF 頁序、2.5／3.1 Live setup、思考強度映射、`setupComplete` 探測、模型 allowlist、設定遷移、純文字模式、快捷鍵、串流字幕合併、同步／非同步 grounding、`WHEN_IDLE` 回應、權限錯誤分類與 PCM 音訊轉換。
+測試涵蓋來源處理、檔案解析、PDF 頁序、2.5／3.1 Live setup、思考強度映射、`setupComplete` 探測、模型 allowlist、設定遷移、純文字模式、快捷鍵、串流字幕合併、同步／非同步 grounding 與 YouTube 影片分析、`WHEN_IDLE` 回應、權限錯誤分類與 PCM 音訊轉換。

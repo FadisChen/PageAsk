@@ -17,15 +17,25 @@ import {
   LiveSession,
   probeLiveModel,
 } from "./js/gemini.js";
+import {
+  addHistoryEntry,
+  createHistoryEntry,
+  deriveHistoryTitle,
+  exportHistoryListToMarkdown,
+  exportHistoryToMarkdown,
+  matchesHistorySearch,
+} from "./js/history.js";
 import { processCompanionMemory } from "./js/memory.js";
 import { createActiveSource } from "./js/source.js";
 import {
   createMemory,
   clearSource,
   estimateTokens,
+  loadHistory,
   loadMemories,
   loadSettings,
   loadSource,
+  saveHistory,
   saveMemories,
   saveSettings,
   saveSource,
@@ -89,7 +99,7 @@ export class TranscriptCollector {
 }
 
 const elements = Object.fromEntries([
-  "settingsButton", "readingModeButton", "companionModeButton",
+  "settingsButton", "historyButton", "readingModeButton", "companionModeButton",
   "sourceSection", "sourceState", "sourceCard", "sourceKind", "sourceTitle", "sourcePreview",
   "sourceLink", "sourceWarning", "pickBlockButton", "uploadButton", "fileInput",
   "conversationHeading", "connectionPill", "connectionText", "voiceStage", "voiceStatus", "voiceHint", "levelBar",
@@ -103,6 +113,7 @@ const elements = Object.fromEntries([
   "settingsCompanionPrompt", "settingsResetPromptButton", "settingsMemoryEnabled", "settingsMemoryBudget",
   "memoryUsage", "newMemoryButton", "newMemoryEditor", "newMemoryContent", "newMemoryLocked",
   "saveNewMemoryButton", "cancelNewMemoryButton", "memoryList",
+  "historyDialog", "historyCloseButton", "historySearchInput", "exportAllHistoryButton", "historyList",
 ].map((id) => [id, document.getElementById(id)]));
 
 let microphonePermissionStatus = null;
@@ -112,6 +123,7 @@ const state = {
   settings: await loadSettings(),
   source: await loadSource(),
   memories: await loadMemories(),
+  history: await loadHistory(),
   session: null,
   audio: null,
   started: false,
@@ -125,6 +137,8 @@ const state = {
   status: "ready",
   transcript: new TranscriptCollector(),
   tools: new Map(),
+  historyQuery: "",
+  sessionStartedAt: null,
 };
 
 renderAll();
@@ -144,6 +158,18 @@ for (const voice of VOICES) {
 }
 
 elements.settingsButton.addEventListener("click", openSettings);
+elements.historyButton.addEventListener("click", openHistory);
+elements.historyCloseButton.addEventListener("click", closeHistory);
+elements.historyDialog.addEventListener("click", (event) => {
+  if (event.target === elements.historyDialog) closeHistory();
+});
+elements.historySearchInput.addEventListener("input", () => {
+  state.historyQuery = elements.historySearchInput.value;
+  renderHistoryList();
+});
+elements.exportAllHistoryButton.addEventListener("click", exportAllHistory);
+elements.historyList.addEventListener("click", handleHistoryListClick);
+elements.historyList.addEventListener("change", handleHistoryListChange);
 elements.settingsCloseButton.addEventListener("click", closeSettings);
 elements.settingsCancelButton.addEventListener("click", closeSettings);
 elements.settingsToggleKeyButton.addEventListener("click", toggleSettingsKey);
@@ -285,6 +311,7 @@ async function startSession() {
   }
 
   state.started = true;
+  state.sessionStartedAt = Date.now();
   state.activeMode = mode;
   state.activeMemoryEnabled = mode === "companion" && state.settings.companionMemoryEnabled;
   state.activeMemoryConfig = state.activeMemoryEnabled ? {
@@ -328,6 +355,7 @@ async function startSession() {
       onInterrupted: () => { state.audio?.flushPlayback(); state.transcript.onInterrupted(); scheduleTranscriptRender(); },
       onTurnComplete: () => { state.transcript.onTurnComplete(); scheduleTranscriptRender(); },
       onGrounding: handleGroundingEvent,
+      onYoutubeAnalysis: handleYoutubeAnalysisEvent,
       onError: (error) => {
         toast(friendlyApiError(error), true);
         void endSession(false, false);
@@ -514,7 +542,25 @@ async function endSession(showNotice = true, processMemory = true) {
   state.muted = false;
   state.microphoneActive = false;
 
-  let notice = "對談已結束，逐字稿不會被保存。 ";
+  if (transcript.length) {
+    const entry = createHistoryEntry({
+      mode: completedMode,
+      sources: completedMode === "reading" && state.source ? [state.source] : [],
+      transcript,
+      startedAt: state.sessionStartedAt,
+      endedAt: Date.now(),
+    });
+    const { history, evictedCount, warning } = addHistoryEntry(state.history, entry);
+    try {
+      state.history = await saveHistory(history);
+      if (evictedCount) toast(`已清除 ${evictedCount} 筆最舊且未釘選的歷史紀錄。`);
+      if (warning) toast(warning, true);
+    } catch (error) {
+      toast(`歷史紀錄儲存失敗：${error.message}`, true);
+    }
+  }
+
+  let notice = transcript.length ? "對談已結束，逐字稿已保存至歷史紀錄。" : "對談已結束。";
   let noticeIsError = false;
   if (shouldProcessMemory && transcript.length) {
     state.memoryProcessing = true;
@@ -641,6 +687,12 @@ function handleGroundingEvent(event) {
   renderTools();
 }
 
+function handleYoutubeAnalysisEvent(event) {
+  state.tools.set(event.id, event);
+  if (state.tools.size > 5) state.tools.delete(state.tools.keys().next().value);
+  renderTools();
+}
+
 function renderMemoryList() {
   const budget = Number(elements.settingsMemoryBudget.value) || state.settings.companionMemoryBudgetTokens;
   const used = state.memories.reduce((sum, memory) => sum + estimateTokens(memory.content), 0);
@@ -696,6 +748,157 @@ function renderMemoryList() {
     item.append(textarea, meta);
     elements.memoryList.appendChild(item);
   }
+}
+
+async function openHistory() {
+  state.history = await loadHistory();
+  elements.historySearchInput.value = state.historyQuery;
+  renderHistoryList();
+  if (!elements.historyDialog.open) elements.historyDialog.showModal();
+}
+
+function closeHistory() {
+  elements.historyDialog.close();
+}
+
+function renderHistoryList() {
+  const entries = state.history
+    .filter((entry) => matchesHistorySearch(entry, state.historyQuery))
+    .sort((a, b) => b.endedAt - a.endedAt);
+
+  elements.historyList.replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "history-empty";
+    empty.textContent = state.history.length
+      ? "沒有符合搜尋條件的歷史紀錄。"
+      : "還沒有任何歷史紀錄。結束一場對談後會自動保存在這裡。";
+    elements.historyList.appendChild(empty);
+    return;
+  }
+
+  for (const entry of entries) {
+    elements.historyList.appendChild(buildHistoryItem(entry));
+  }
+}
+
+function buildHistoryItem(entry) {
+  const item = document.createElement("article");
+  item.className = "history-item";
+  item.dataset.historyId = entry.id;
+
+  const head = document.createElement("div");
+  head.className = "history-item-head";
+  const badge = document.createElement("span");
+  badge.className = `history-badge ${entry.mode === "companion" ? "is-companion" : ""}`;
+  badge.textContent = entry.mode === "companion" ? `陪伴${entry.personaName ? ` · ${entry.personaName}` : ""}` : "閱讀";
+  const title = document.createElement("strong");
+  title.className = "history-item-title";
+  title.textContent = deriveHistoryTitle(entry);
+  head.append(badge, title);
+
+  const preview = document.createElement("p");
+  preview.className = "history-item-preview";
+  const firstLine = entry.transcript.find((line) => line.role === "user") || entry.transcript[0];
+  preview.textContent = excerpt(firstLine?.text || "", 160);
+
+  const details = document.createElement("details");
+  details.className = "history-item-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "展開完整逐字稿";
+  const transcriptBox = document.createElement("div");
+  transcriptBox.className = "history-transcript";
+  for (const line of entry.transcript) {
+    const row = document.createElement("div");
+    row.className = `transcript-line ${line.role === "model" ? "is-model" : ""}`;
+    const label = document.createElement("strong");
+    label.textContent = line.role === "model" ? (entry.personaName || "小書僮") : "你";
+    const text = document.createElement("p");
+    text.textContent = line.text;
+    row.append(label, text);
+    transcriptBox.appendChild(row);
+  }
+  details.append(summary, transcriptBox);
+
+  const meta = document.createElement("div");
+  meta.className = "memory-meta";
+  const pin = document.createElement("label");
+  pin.className = "memory-lock-toggle";
+  const pinCheckbox = document.createElement("input");
+  pinCheckbox.type = "checkbox";
+  pinCheckbox.checked = entry.pinned;
+  pinCheckbox.dataset.historyPin = "true";
+  pin.append(pinCheckbox, document.createTextNode(" 釘選"));
+
+  const time = document.createElement("span");
+  time.textContent = new Date(entry.endedAt).toLocaleString("zh-TW", { dateStyle: "medium", timeStyle: "short" });
+
+  const actions = document.createElement("div");
+  actions.className = "memory-item-actions";
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.dataset.historyAction = "export";
+  exportButton.textContent = "匯出";
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.dataset.historyAction = "delete";
+  deleteButton.textContent = "刪除";
+  actions.append(exportButton, deleteButton);
+  meta.append(pin, time, actions);
+
+  item.append(head, preview, details, meta);
+  return item;
+}
+
+async function handleHistoryListChange(event) {
+  const checkbox = event.target.closest("input[data-history-pin]");
+  if (!checkbox) return;
+  const item = checkbox.closest("[data-history-id]");
+  const id = item?.dataset.historyId;
+  if (!id) return;
+  state.history = await saveHistory(
+    state.history.map((entry) => (entry.id === id ? { ...entry, pinned: checkbox.checked } : entry)),
+  );
+}
+
+async function handleHistoryListClick(event) {
+  const button = event.target.closest("button[data-history-action]");
+  if (!button) return;
+  const item = button.closest("[data-history-id]");
+  const entry = state.history.find((candidate) => candidate.id === item?.dataset.historyId);
+  if (!entry) return;
+
+  if (button.dataset.historyAction === "export") {
+    downloadMarkdown(historyFileName(entry), exportHistoryToMarkdown(entry));
+    return;
+  }
+
+  if (button.dataset.historyAction === "delete") {
+    if (!confirm("確定要刪除這筆歷史紀錄嗎？")) return;
+    state.history = await saveHistory(state.history.filter((candidate) => candidate.id !== entry.id));
+    renderHistoryList();
+    toast("歷史紀錄已刪除。 ");
+  }
+}
+
+function exportAllHistory() {
+  if (!state.history.length) return toast("目前沒有歷史紀錄可以匯出。", true);
+  downloadMarkdown("pageask-history.md", exportHistoryListToMarkdown([...state.history].sort((a, b) => b.endedAt - a.endedAt)));
+}
+
+function downloadMarkdown(filename, content) {
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function historyFileName(entry) {
+  const date = new Date(entry.startedAt).toISOString().slice(0, 10);
+  return `pageask-${date}-${entry.id}.md`;
 }
 
 function renderMode() {
@@ -809,8 +1012,8 @@ function renderTranscript() {
     const copy = document.createElement("p");
     const companion = (state.activeMode || state.settings.conversationMode) === "companion";
     copy.textContent = companion && state.settings.companionMemoryEnabled
-      ? "逐字稿只用於會後整理長期記憶，整理完成即捨棄；關閉面板不會保存。"
-      : "開始後，你和 小書僮 的即時字幕會留在這裡；關閉面板後不會保存。";
+      ? "逐字稿會用於會後整理長期記憶，並保存一份到歷史紀錄；直接關閉面板則不會保存。"
+      : "開始後，你和 小書僮 的即時字幕會留在這裡；按下「結束」後會保存到歷史紀錄，直接關閉面板則不會保存。";
     empty.append(title, copy);
     elements.transcript.appendChild(empty);
     return;
@@ -844,28 +1047,54 @@ function renderTools() {
   elements.toolFeedState.textContent = loading ? "查詢中…" : `${events.length} 項結果`;
   elements.toolItems.replaceChildren();
   for (const event of events) {
-    const item = document.createElement("div");
-    item.className = "tool-item";
-    const title = document.createElement("strong");
-    title.textContent = event.status === "loading" ? "正在查詢 Google Search…" : event.status === "complete" ? "查詢完成" : "查詢失敗";
-    const query = document.createElement("span");
-    query.textContent = event.query || event.error || "未提供查詢內容";
-    item.append(title, query);
-    if (event.result?.sources?.length) {
-      const links = document.createElement("div");
-      links.className = "tool-sources";
-      for (const source of event.result.sources) {
-        const anchor = document.createElement("a");
-        anchor.href = source.url;
-        anchor.target = "_blank";
-        anchor.rel = "noreferrer";
-        anchor.textContent = excerpt(source.title, 28);
-        links.appendChild(anchor);
-      }
-      item.appendChild(links);
-    }
-    elements.toolItems.appendChild(item);
+    elements.toolItems.appendChild("url" in event ? renderYoutubeToolItem(event) : renderGroundingToolItem(event));
   }
+}
+
+function renderGroundingToolItem(event) {
+  const item = document.createElement("div");
+  item.className = "tool-item";
+  const title = document.createElement("strong");
+  title.textContent = event.status === "loading" ? "正在查詢 Google Search…" : event.status === "complete" ? "查詢完成" : "查詢失敗";
+  const query = document.createElement("span");
+  query.textContent = event.query || event.error || "未提供查詢內容";
+  item.append(title, query);
+  if (event.result?.sources?.length) {
+    const links = document.createElement("div");
+    links.className = "tool-sources";
+    for (const source of event.result.sources) {
+      const anchor = document.createElement("a");
+      anchor.href = source.url;
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer";
+      anchor.textContent = excerpt(source.title, 28);
+      links.appendChild(anchor);
+    }
+    item.appendChild(links);
+  }
+  return item;
+}
+
+function renderYoutubeToolItem(event) {
+  const item = document.createElement("div");
+  item.className = "tool-item";
+  const title = document.createElement("strong");
+  title.textContent = event.status === "loading" ? "正在分析 YouTube 影片…" : event.status === "complete" ? "影片分析完成" : "影片分析失敗";
+  const detail = document.createElement("span");
+  detail.textContent = event.error || event.question || "整體摘要";
+  item.append(title, detail);
+  if (event.url) {
+    const links = document.createElement("div");
+    links.className = "tool-sources";
+    const anchor = document.createElement("a");
+    anchor.href = event.url;
+    anchor.target = "_blank";
+    anchor.rel = "noreferrer";
+    anchor.textContent = excerpt(event.url, 28);
+    links.appendChild(anchor);
+    item.appendChild(links);
+  }
+  return item;
 }
 
 function setStatus(status) {

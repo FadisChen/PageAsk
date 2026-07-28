@@ -9,9 +9,12 @@ import {
   LIVE_THINKING_OPTIONS,
 } from "../js/constants.js";
 import {
+  cleanHistory,
+  cleanHistoryEntry,
   cleanMemories,
   cleanSettings,
   createMemory,
+  estimateStorageBytes,
   estimateTokens,
   updateMemory,
 } from "../js/storage.js";
@@ -73,4 +76,34 @@ test("token estimation weighs CJK characters directly", () => {
   assert.equal(estimateTokens("中文"), 2);
   assert.equal(estimateTokens("abcd"), 1);
   assert.equal(estimateTokens("中文abcd"), 3);
+});
+
+test("history entries are cleaned, trimmed, and defaulted", () => {
+  const entry = cleanHistoryEntry({
+    mode: "companion",
+    transcript: [{ role: "user", text: " 你好 " }, { role: "model", text: "" }, { role: "model", text: "我在" }],
+  });
+  assert.equal(entry.mode, "companion");
+  assert.deepEqual(entry.transcript, [{ role: "user", text: "你好" }, { role: "model", text: "我在" }]);
+  assert.equal(entry.pinned, false);
+  assert.equal(entry.truncated, false);
+  assert.ok(entry.id);
+});
+
+test("cleanHistoryEntry truncates transcripts longer than the per-entry character cap", () => {
+  const entry = cleanHistoryEntry({ mode: "reading", transcript: [{ role: "user", text: "字".repeat(50000) }] });
+  assert.equal(entry.truncated, true);
+  assert.equal(entry.originalChars, 50000);
+  assert.ok(entry.transcript[0].text.length <= 40000);
+});
+
+test("cleanHistory drops entries without any transcript content", () => {
+  const cleaned = cleanHistory([null, { transcript: [] }, { transcript: [{ role: "user", text: "hi" }] }]);
+  assert.equal(cleaned.length, 1);
+});
+
+test("estimateStorageBytes counts UTF-8 bytes, not UTF-16 code units", () => {
+  const value = "中文字元";
+  const naiveLength = JSON.stringify(value).length;
+  assert.ok(estimateStorageBytes(value) > naiveLength);
 });
