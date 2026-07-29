@@ -58,6 +58,7 @@ export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_SOURCE_CHARS = 60000;
 export const MAX_COMPANION_PROMPT_CHARS = 12000;
 export const MAX_MEMORY_CHARS = 4000;
+export const MAX_MEMORY_BUDGET_TOKENS = 12000;
 export const MAX_HISTORY_ENTRIES = 300;
 export const MAX_HISTORY_ENTRY_CHARS = 40000;
 export const MAX_HISTORY_TOTAL_BYTES = 8 * 1024 * 1024;

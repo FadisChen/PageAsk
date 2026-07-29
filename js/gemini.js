@@ -245,7 +245,12 @@ export async function extractMemories(apiKey, transcript, existing = [], fetchIm
     .map((line) => `${line.role === "user" ? "使用者" : "小書僮"}：${String(line.text).trim()}`)
     .join("\n");
   if (!transcriptText) return [];
-  const existingText = existing.length ? existing.map((item) => `- ${memoryContent(item)}`).join("\n") : "（目前沒有任何記憶）";
+  const existingMemories = normalizeMemoryRecords(existing);
+  const existingText = existingMemories.length
+    ? existingMemories
+      .map((item) => `- ID=${item.id}｜${item.locked ? "已鎖定" : "可更新"}｜${item.content}`)
+      .join("\n")
+    : "（目前沒有任何記憶）";
   const prompt = `你是「小書僮」的長期記憶整理助手。請從本次對話中找出值得下次對談使用的新資訊。
 
 ## 已有記憶
@@ -257,42 +262,83 @@ ${transcriptText}
 ## 任務
 1. 只保存關於使用者、且適合長期記住的偏好、經歷、關係、近況或重要日期。
 2. 每條不超過 60 個中文字，以第三人稱描述使用者。
-3. 與已有記憶重複、只有措辭差異、瑣碎寒暄或一次性話題都不要保存。
-4. 一律使用臺灣繁體中文；沒有新內容時回傳空陣列。`;
-  return generateMemoryList(apiKey, prompt, existing, fetchImpl);
+3. 使用者的新說法若補充或取代既有未鎖定記憶，回傳 update 與正確 targetId；不得更新已鎖定記憶。
+4. 全新資訊回傳 add；重複、只有措辭差異、瑣碎寒暄或一次性話題回傳 ignore。
+5. 只能把「使用者自己說的內容」當成事實依據；小書僮的話只可用來理解上下文。
+6. 一律使用臺灣繁體中文；沒有可執行變更時回傳空陣列。`;
+  return generateMemoryOperations(
+    apiKey,
+    prompt,
+    existingMemories,
+    ["add", "update", "ignore"],
+    fetchImpl,
+  );
 }
 
 export async function consolidateMemories(apiKey, memories, budgetTokens, fetchImpl = fetch) {
   if (!Array.isArray(memories) || !memories.length) return [];
+  const existingMemories = normalizeMemoryRecords(memories);
   const prompt = `以下是小書僮對使用者的未鎖定長期記憶，總量已超過限制，需要安全濃縮。
 
 ## 目前記憶
-${memories.map((item) => `- ${memoryContent(item)}`).join("\n")}
+${existingMemories.map((item) => `- ID=${item.id}｜${item.content}`).join("\n")}
 
 ## 任務
-1. 合併相似或相關條目，刪除被新資訊取代的內容。
+1. 合併相似或相關條目時，以 update 更新其中一個 targetId，再以 delete 移除其他已被合併的 targetId。
 2. 保留名字、日期與數字等具體事實，不要泛化到失去意義。
 3. 目標約 ${Math.max(200, Number(budgetTokens) || 200)} tokens 以內，且必須明顯短於原本。
-4. 每條不超過 60 個中文字，一律使用臺灣繁體中文。`;
-  return generateMemoryList(apiKey, prompt, [], fetchImpl);
+4. 不需變更的項目回傳 ignore；不得新增記憶或使用不存在的 targetId。
+5. 每條不超過 60 個中文字，一律使用臺灣繁體中文。`;
+  return generateMemoryOperations(
+    apiKey,
+    prompt,
+    existingMemories,
+    ["update", "delete", "ignore"],
+    fetchImpl,
+  );
 }
 
-export function cleanGeneratedMemories(values, existing = []) {
+export function cleanMemoryOperations(values, existing = [], allowedActions = ["add", "update", "ignore"]) {
   if (!Array.isArray(values)) return [];
-  const seen = new Set(existing.map((item) => normalizeMemory(memoryContent(item))));
-  const output = [];
+  const allowed = new Set(allowedActions);
+  const records = normalizeMemoryRecords(existing);
+  const byId = new Map(records.map((memory) => [memory.id, memory]));
+  const seenContent = new Set(records.map((memory) => normalizeMemory(memory.content)));
+  const seenTargets = new Set();
+  const operations = [];
+
   for (const value of values) {
-    if (typeof value !== "string") continue;
-    const content = value.replace(/\s+/g, " ").trim().slice(0, MAX_MEMORY_CHARS);
-    const key = normalizeMemory(content);
-    if (!content || seen.has(key)) continue;
-    seen.add(key);
-    output.push(content);
+    if (!value || typeof value !== "object") continue;
+    const action = typeof value.action === "string" ? value.action.toLowerCase() : "";
+    if (!allowed.has(action) || action === "ignore") continue;
+
+    if (action === "add") {
+      const content = cleanGeneratedMemoryContent(value.content);
+      const key = normalizeMemory(content);
+      if (!content || seenContent.has(key)) continue;
+      seenContent.add(key);
+      operations.push({ action, content });
+      continue;
+    }
+
+    const targetId = typeof value.targetId === "string" ? value.targetId : "";
+    const target = byId.get(targetId);
+    if (!target || target.locked || seenTargets.has(targetId)) continue;
+    if (action === "delete") {
+      seenTargets.add(targetId);
+      operations.push({ action, targetId });
+      continue;
+    }
+
+    const content = cleanGeneratedMemoryContent(value.content);
+    if (!content || normalizeMemory(content) === normalizeMemory(target.content)) continue;
+    seenTargets.add(targetId);
+    operations.push({ action, targetId, content });
   }
-  return output;
+  return operations;
 }
 
-async function generateMemoryList(apiKey, prompt, existing, fetchImpl) {
+async function generateMemoryOperations(apiKey, prompt, existing, allowedActions, fetchImpl) {
   const response = await fetchImpl(`${API_BASE}/models/${GROUNDING_MODEL}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
@@ -301,7 +347,18 @@ async function generateMemoryList(apiKey, prompt, existing, fetchImpl) {
       generationConfig: {
         thinkingConfig: { thinkingBudget: 0 },
         responseMimeType: "application/json",
-        responseSchema: { type: "ARRAY", items: { type: "STRING" } },
+        responseSchema: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              action: { type: "STRING", enum: allowedActions },
+              targetId: { type: "STRING" },
+              content: { type: "STRING" },
+            },
+            required: ["action"],
+          },
+        },
       },
     }),
   });
@@ -318,11 +375,25 @@ async function generateMemoryList(apiKey, prompt, existing, fetchImpl) {
   let values;
   try { values = JSON.parse(text); }
   catch { throw new Error("Gemini 記憶整理結果不是有效的 JSON。"); }
-  return cleanGeneratedMemories(values, existing);
+  return cleanMemoryOperations(values, existing, allowedActions);
 }
 
 function memoryContent(value) {
   return typeof value === "string" ? value : String(value?.content || "");
+}
+
+function normalizeMemoryRecords(values) {
+  return (Array.isArray(values) ? values : []).map((value, index) => ({
+    id: typeof value === "object" && typeof value?.id === "string" && value.id
+      ? value.id
+      : `legacy-memory-${index + 1}`,
+    content: memoryContent(value).trim().slice(0, MAX_MEMORY_CHARS),
+    locked: Boolean(value?.locked),
+  })).filter((memory) => memory.content);
+}
+
+function cleanGeneratedMemoryContent(value) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, MAX_MEMORY_CHARS) : "";
 }
 
 function normalizeMemory(value) {
@@ -444,10 +515,16 @@ export class LiveSession {
         model: `models/${this.modelOption.id}`,
         generationConfig,
         systemInstruction: { parts: [{ text: this.config.systemInstruction }] },
-        realtimeInputConfig: { automaticActivityDetection: { disabled: false } },
+        realtimeInputConfig: {
+          automaticActivityDetection: { disabled: false },
+          turnCoverage: "TURN_INCLUDES_ONLY_ACTIVITY",
+        },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
-        contextWindowCompression: { slidingWindow: {} },
+        contextWindowCompression: {
+          triggerTokens: 25000,
+          slidingWindow: { targetTokens: 8000 },
+        },
         sessionResumption: this.resumptionHandle ? { handle: this.resumptionHandle } : {},
         tools: [{ functionDeclarations: [groundingDeclaration, youtubeDeclaration] }],
       },

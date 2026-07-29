@@ -12,7 +12,7 @@ PageAsk 是一個 Chrome 116+ Manifest V3 擴充功能。它會把使用者選�
 - 可選純文字模式；不需麥克風權限也能使用 Live 文字輸入與字幕
 - 麥克風權限狀態提示與 Chrome 權限設定入口
 - 文字輸入支援 Enter 送出、Ctrl+Enter 換行，串流字幕片段會清除邊界空白
-- Context window compression、session resumption 與 GoAway 重連
+- Context window compression（25,000 tokens 觸發、保留最近 8,000 tokens）、只保留語音活動的 turn context、session resumption 與 GoAway 重連
 - Live 模型可切換 Gemini 2.5（非同步工具）與 Gemini 3.1（低延遲同步工具）
 - Gemini 2.5 使用非阻塞 Google Search grounding，結果會在目前發言結束後回報
 - 對談中提供公開 YouTube 影片網址即可請 Gemini 直接摘要或回答影片內容（不擷取字幕，由 Gemini 端直接讀取畫面與音訊），可選填時間片段

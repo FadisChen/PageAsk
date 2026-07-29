@@ -11,7 +11,8 @@ import {
   buildCompanionSystemInstruction,
   buildSystemInstruction,
   checkRequiredModels,
-  cleanGeneratedMemories,
+  cleanMemoryOperations,
+  consolidateMemories,
   createGroundingFunctionResponse,
   createYoutubeAnalysisFunctionResponse,
   extractMemories,
@@ -71,14 +72,28 @@ test("companion prompt keeps editable persona, fixed rules, time, and untrusted 
   assert.equal((prompt.match(/<\/memory>/g) || []).length, 1);
 });
 
-test("generated memories are validated and exactly deduplicated", () => {
+test("memory operations reject invalid targets, duplicates, and locked updates", () => {
+  const existing = [
+    { id: "locked", content: "使用者喜歡茶", locked: true },
+    { id: "open", content: "使用者住在臺北", locked: false },
+  ];
   assert.deepEqual(
-    cleanGeneratedMemories([" 使用者喜歡茶 ", "", 7, "使用者喜歡茶", "使用者住在臺北"], ["使用者喜歡茶"]),
-    ["使用者住在臺北"],
+    cleanMemoryOperations([
+      { action: "add", content: " 使用者喜歡陶藝 " },
+      { action: "add", content: "使用者喜歡茶" },
+      { action: "update", targetId: "locked", content: "不得更新" },
+      { action: "update", targetId: "missing", content: "不存在" },
+      { action: "update", targetId: "open", content: "使用者住在新竹" },
+      { action: "ignore" },
+    ], existing),
+    [
+      { action: "add", content: "使用者喜歡陶藝" },
+      { action: "update", targetId: "open", content: "使用者住在新竹" },
+    ],
   );
 });
 
-test("memory extraction requests structured JSON from the existing Flash model", async () => {
+test("memory extraction requests structured operations from the existing Flash model", async () => {
   let requestedUrl;
   let requestedBody;
   const fetchImpl = async (url, options) => {
@@ -87,20 +102,51 @@ test("memory extraction requests structured JSON from the existing Flash model",
     return {
       ok: true,
       json: async () => ({
-        candidates: [{ content: { parts: [{ text: '["使用者喜歡陶藝","使用者喜歡茶"]' }] } }],
+        candidates: [{ content: { parts: [{ text: JSON.stringify([
+          { action: "add", content: "使用者喜歡陶藝" },
+          { action: "add", content: "使用者喜歡茶" },
+        ]) }] } }],
       }),
     };
   };
   const result = await extractMemories(
     "key",
     [{ role: "user", text: "我最近開始學陶藝" }],
-    ["使用者喜歡茶"],
+    [{ id: "tea", content: "使用者喜歡茶", locked: false }],
     fetchImpl,
   );
   assert.match(requestedUrl, new RegExp(`${GROUNDING_MODEL}:generateContent\$`));
   assert.equal(requestedBody.generationConfig.responseMimeType, "application/json");
-  assert.deepEqual(requestedBody.generationConfig.responseSchema, { type: "ARRAY", items: { type: "STRING" } });
-  assert.deepEqual(result, ["使用者喜歡陶藝"]);
+  assert.deepEqual(requestedBody.generationConfig.responseSchema.items.properties.action.enum, ["add", "update", "ignore"]);
+  assert.deepEqual(result, [{ action: "add", content: "使用者喜歡陶藝" }]);
+});
+
+test("memory consolidation returns only valid update and delete operations", async () => {
+  let requestedBody;
+  const memories = [
+    { id: "old", content: "使用者喜歡茶", locked: false },
+    { id: "duplicate", content: "使用者偏好喝茶", locked: false },
+  ];
+  const fetchImpl = async (_url, options) => {
+    requestedBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: JSON.stringify([
+          { action: "update", targetId: "old", content: "使用者偏好喝茶" },
+          { action: "delete", targetId: "duplicate" },
+          { action: "add", content: "不允許新增" },
+        ]) }] } }],
+      }),
+    };
+  };
+
+  const result = await consolidateMemories("key", memories, 200, fetchImpl);
+  assert.deepEqual(requestedBody.generationConfig.responseSchema.items.properties.action.enum, ["update", "delete", "ignore"]);
+  assert.deepEqual(result, [
+    { action: "update", targetId: "old", content: "使用者偏好喝茶" },
+    { action: "delete", targetId: "duplicate" },
+  ]);
 });
 
 test("live setup enables audio, transcripts, VAD, compression, resumption, and one non-blocking tool", () => {
@@ -116,9 +162,13 @@ test("live setup enables audio, transcripts, VAD, compression, resumption, and o
   assert.equal(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, "Aoede");
   assert.equal("languageCode" in setup.generationConfig.speechConfig, false);
   assert.equal(setup.realtimeInputConfig.automaticActivityDetection.disabled, false);
+  assert.equal(setup.realtimeInputConfig.turnCoverage, "TURN_INCLUDES_ONLY_ACTIVITY");
   assert.deepEqual(setup.inputAudioTranscription, {});
   assert.deepEqual(setup.outputAudioTranscription, {});
-  assert.deepEqual(setup.contextWindowCompression, { slidingWindow: {} });
+  assert.deepEqual(setup.contextWindowCompression, {
+    triggerTokens: 25000,
+    slidingWindow: { targetTokens: 8000 },
+  });
   assert.equal(setup.tools[0].functionDeclarations.length, 2);
   assert.deepEqual(
     setup.tools[0].functionDeclarations.map((declaration) => declaration.name),

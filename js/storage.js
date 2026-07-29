@@ -6,6 +6,7 @@ import {
   HISTORY_KEY,
   MAX_COMPANION_PROMPT_CHARS,
   MAX_HISTORY_ENTRY_CHARS,
+  MAX_MEMORY_BUDGET_TOKENS,
   MAX_MEMORY_CHARS,
   MEMORIES_KEY,
   SETTINGS_KEY,
@@ -43,7 +44,7 @@ export function cleanSettings(value) {
     companionMemoryBudgetTokens: numberInRange(
       settings.companionMemoryBudgetTokens,
       200,
-      100000,
+      MAX_MEMORY_BUDGET_TOKENS,
       DEFAULT_SETTINGS.companionMemoryBudgetTokens,
     ),
   };
@@ -83,26 +84,46 @@ export function cleanMemory(value) {
   const content = typeof value.content === "string" ? value.content.trim().slice(0, MAX_MEMORY_CHARS) : "";
   if (!content) return null;
   const now = Date.now();
+  const createdAt = Number(value.createdAt) || now;
+  const updatedAt = Number(value.updatedAt) || createdAt;
   return {
     id: typeof value.id === "string" && value.id ? value.id : makeId(),
     content,
     locked: Boolean(value.locked),
-    createdAt: Number(value.createdAt) || now,
-    updatedAt: Number(value.updatedAt) || Number(value.createdAt) || now,
+    userConfirmed: typeof value.userConfirmed === "boolean" ? value.userConfirmed : Boolean(value.locked),
+    lastConfirmedAt: Number(value.lastConfirmedAt) || updatedAt,
+    createdAt,
+    updatedAt,
   };
 }
 
-export function createMemory(content, locked = true) {
+export function createMemory(content, locked = true, {
+  userConfirmed = true,
+  lastConfirmedAt = Date.now(),
+} = {}) {
   const now = Date.now();
-  return cleanMemory({ id: makeId(), content, locked, createdAt: now, updatedAt: now });
+  return cleanMemory({
+    id: makeId(),
+    content,
+    locked,
+    userConfirmed,
+    lastConfirmedAt,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
-export function updateMemory(current, content, locked = current?.locked) {
+export function updateMemory(current, content, locked = current?.locked, {
+  userConfirmed = true,
+  lastConfirmedAt = Date.now(),
+} = {}) {
   if (!current) return null;
   return cleanMemory({
     ...current,
     content,
     locked,
+    userConfirmed,
+    lastConfirmedAt,
     id: current.id,
     createdAt: current.createdAt,
     updatedAt: Date.now(),

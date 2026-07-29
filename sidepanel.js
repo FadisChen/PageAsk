@@ -25,7 +25,7 @@ import {
   exportHistoryToMarkdown,
   matchesHistorySearch,
 } from "./js/history.js";
-import { processCompanionMemory } from "./js/memory.js";
+import { fitMemoriesToBudget, processCompanionMemory } from "./js/memory.js";
 import { createActiveSource } from "./js/source.js";
 import {
   createMemory,
@@ -318,6 +318,12 @@ async function startSession() {
     apiKey: state.settings.apiKey,
     budgetTokens: state.settings.companionMemoryBudgetTokens,
   } : null;
+  const promptMemories = state.activeMemoryEnabled
+    ? fitMemoriesToBudget(state.memories, state.activeMemoryConfig.budgetTokens)
+    : { memories: [], omittedCount: 0 };
+  if (promptMemories.omittedCount) {
+    toast(`記憶超過本次預算，已省略 ${promptMemories.omittedCount} 條。`);
+  }
   state.microphoneActive = useMicrophone;
   state.muted = !useMicrophone;
   state.transcript = new TranscriptCollector();
@@ -329,7 +335,7 @@ async function startSession() {
   const systemInstruction = mode === "companion"
     ? buildCompanionSystemInstruction(
       state.settings.companionSystemPrompt,
-      state.activeMemoryEnabled ? state.memories.map((memory) => memory.content) : [],
+      promptMemories.memories.map((memory) => memory.content),
     )
     : buildSystemInstruction(state.source);
 
@@ -424,10 +430,11 @@ function closeNewMemoryEditor() {
 async function saveNewMemory() {
   const memory = createMemory(elements.newMemoryContent.value, elements.newMemoryLocked.checked);
   if (!memory) return toast("記憶內容不可空白。", true);
-  state.memories = await saveMemories([...state.memories, memory]);
+  const fitted = await saveMemoriesWithinBudget([...state.memories, memory], undefined, memory.id);
+  if (!fitted.saved) return toast("這條記憶超過目前可用預算，請縮短內容或提高預算。", true);
   closeNewMemoryEditor();
   renderMemoryList();
-  toast("已新增一條記憶。 ");
+  toast(memoryBudgetNotice(fitted, "已新增一條記憶。"), fitted.lockedOverBudget);
 }
 
 async function handleMemoryListClick(event) {
@@ -439,7 +446,7 @@ async function handleMemoryListClick(event) {
 
   if (button.dataset.memoryAction === "delete") {
     if (!confirm("確定要刪除這條長期記憶嗎？")) return;
-    state.memories = await saveMemories(state.memories.filter((entry) => entry.id !== memory.id));
+    await saveMemoriesWithinBudget(state.memories.filter((entry) => entry.id !== memory.id));
     renderMemoryList();
     toast("記憶已刪除。 ");
     return;
@@ -451,9 +458,44 @@ async function handleMemoryListClick(event) {
     item.querySelector('input[type="checkbox"]').checked,
   );
   if (!updated) return toast("記憶內容不可空白。", true);
-  state.memories = await saveMemories(state.memories.map((entry) => entry.id === memory.id ? updated : entry));
+  const fitted = await saveMemoriesWithinBudget(
+    state.memories.map((entry) => entry.id === memory.id ? updated : entry),
+    undefined,
+    updated.id,
+  );
+  if (!fitted.saved) return toast("更新後的記憶超過目前可用預算，請縮短內容或提高預算。", true);
   renderMemoryList();
-  toast("記憶已更新。 ");
+  toast(memoryBudgetNotice(fitted, "記憶已更新。"), fitted.lockedOverBudget);
+}
+
+async function saveMemoriesWithinBudget(
+  memories,
+  budgetTokens = Number(elements.settingsMemoryBudget.value),
+  requiredMemoryId = null,
+) {
+  const fitted = fitMemoriesToBudget(
+    memories,
+    budgetTokens || state.settings.companionMemoryBudgetTokens,
+    { preserveAllLocked: true },
+  );
+  if (requiredMemoryId && !fitted.memories.some((memory) => memory.id === requiredMemoryId)) {
+    return { ...fitted, saved: false };
+  }
+  state.memories = await saveMemories(fitted.memories);
+  return { ...fitted, saved: true };
+}
+
+function memoryBudgetNotice(fitted, successMessage) {
+  if (fitted.lockedOverBudget) {
+    const omittedNotice = fitted.omittedCount
+      ? `另有 ${fitted.omittedCount} 條未鎖定記憶因超額而移除。`
+      : "";
+    return `${successMessage} 鎖定記憶已超過預算，仍保留在本機；對談時只會載入預算容許的部分。${omittedNotice}`;
+  }
+  if (fitted.omittedCount) {
+    return `${successMessage} 另有 ${fitted.omittedCount} 條較舊的未鎖定記憶因超額而移除。`;
+  }
+  return successMessage;
 }
 
 function toggleSettingsKey() {
@@ -475,7 +517,11 @@ async function testAndSaveSettings() {
       voiceName: next.voiceName,
     });
     state.settings = await saveSettings(next);
+    const fitted = await saveMemoriesWithinBudget(state.memories, state.settings.companionMemoryBudgetTokens);
     showSettingsTestStatus("Live 連線成功，設定已儲存。", false, true);
+    if (fitted.omittedCount || fitted.lockedOverBudget) {
+      toast(memoryBudgetNotice(fitted, "記憶已依新預算整理。"), fitted.lockedOverBudget);
+    }
   } catch (error) {
     showSettingsTestStatus(friendlyApiError(error), true);
   } finally {
@@ -488,9 +534,10 @@ async function submitSettings(event) {
   const next = readSettingsForm();
   if (!next) return;
   state.settings = await saveSettings(next);
+  const fitted = await saveMemoriesWithinBudget(state.memories, state.settings.companionMemoryBudgetTokens);
   closeSettings();
   renderAll();
-  toast("設定已儲存。 ");
+  toast(memoryBudgetNotice(fitted, "設定已儲存。"), fitted.lockedOverBudget);
 }
 
 function readSettingsForm() {
@@ -574,9 +621,13 @@ async function endSession(showNotice = true, processMemory = true) {
         budgetTokens: state.activeMemoryConfig.budgetTokens,
       });
       state.memories = await saveMemories(result.memories);
-      notice = result.additions
-        ? `已整理完成，新增 ${result.additions} 條長期記憶。`
-        : "這次對話沒有需要新增的長期記憶。";
+      const changes = [];
+      if (result.additions) changes.push(`新增 ${result.additions} 條`);
+      if (result.updates) changes.push(`更新 ${result.updates} 條`);
+      if (result.consolidated) changes.push("完成超額整併");
+      notice = changes.length
+        ? `已整理完成，長期記憶${changes.join("、")}。`
+        : "這次對話沒有需要更新的長期記憶。";
       if (result.warning) {
         notice = `${notice} ${result.warning}`;
         noticeIsError = true;
@@ -1003,31 +1054,35 @@ function renderStatus() {
 
 function renderTranscript() {
   const lines = state.transcript.preview();
-  elements.transcript.replaceChildren();
   if (!lines.length) {
-    const empty = document.createElement("div");
-    empty.className = "transcript-empty";
-    const title = document.createElement("span");
-    title.textContent = "逐字稿";
-    const copy = document.createElement("p");
+    if (elements.transcriptEmpty.parentElement !== elements.transcript) {
+      while (elements.transcript.firstChild) elements.transcript.firstChild.remove();
+      elements.transcript.append(elements.transcriptEmpty);
+    }
+    const copy = elements.transcriptEmpty.querySelector("p");
     const companion = (state.activeMode || state.settings.conversationMode) === "companion";
     copy.textContent = companion && state.settings.companionMemoryEnabled
       ? "逐字稿會用於會後整理長期記憶，並保存一份到歷史紀錄；直接關閉面板則不會保存。"
       : "開始後，你和 小書僮 的即時字幕會留在這裡；按下「結束」後會保存到歷史紀錄，直接關閉面板則不會保存。";
-    empty.append(title, copy);
-    elements.transcript.appendChild(empty);
     return;
   }
-  for (const line of lines) {
-    const row = document.createElement("div");
-    row.className = `transcript-line ${line.role === "model" ? "is-model" : ""}`;
-    const label = document.createElement("strong");
-    label.textContent = line.role === "model" ? "小書僮" : "你";
-    const text = document.createElement("p");
-    text.textContent = line.text;
-    row.append(label, text);
-    elements.transcript.appendChild(row);
+
+  elements.transcriptEmpty.remove();
+  for (const [index, line] of lines.entries()) {
+    const isModel = line.role === "model";
+    let row = elements.transcript.children[index];
+    if (!row) {
+      row = document.createElement("div");
+      row.append(document.createElement("strong"), document.createElement("p"));
+      elements.transcript.append(row);
+    }
+    row.className = `transcript-line ${isModel ? "is-model" : ""}`;
+    const [label, text] = row.children;
+    const speaker = isModel ? "小書僮" : "你";
+    if (label.textContent !== speaker) label.textContent = speaker;
+    if (text.textContent !== line.text) text.textContent = line.text;
   }
+  while (elements.transcript.children.length > lines.length) elements.transcript.lastElementChild.remove();
   elements.transcript.scrollTop = elements.transcript.scrollHeight;
 }
 

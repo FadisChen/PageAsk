@@ -54,22 +54,40 @@ test("companion settings are validated and bounded", () => {
   assert.equal(settings.conversationMode, "reading");
   assert.equal(settings.companionSystemPrompt, DEFAULT_COMPANION_SYSTEM_PROMPT);
   assert.equal(settings.companionMemoryEnabled, false);
-  assert.equal(settings.companionMemoryBudgetTokens, 100000);
+  assert.equal(settings.companionMemoryBudgetTokens, 12000);
 });
 
 test("memories clean, create, and update with stable identity", () => {
   const memory = createMemory("  使用者喜歡爬山  ", true);
   assert.equal(memory.content, "使用者喜歡爬山");
   assert.equal(memory.locked, true);
+  assert.equal(memory.userConfirmed, true);
+  assert.ok(memory.lastConfirmedAt);
 
   const updated = updateMemory(memory, "使用者喜歡週末爬山", false);
   assert.equal(updated.id, memory.id);
   assert.equal(updated.createdAt, memory.createdAt);
   assert.equal(updated.content, "使用者喜歡週末爬山");
   assert.equal(updated.locked, false);
+  assert.equal(updated.userConfirmed, true);
   assert.ok(updated.updatedAt >= memory.updatedAt);
+  assert.ok(updated.lastConfirmedAt >= memory.lastConfirmedAt);
 
   assert.deepEqual(cleanMemories([null, { content: " " }, updated]), [updated]);
+});
+
+test("legacy memories receive confirmation metadata without changing identity", () => {
+  const legacy = cleanMemories([{
+    id: "legacy",
+    content: "使用者喜歡爬山",
+    locked: true,
+    createdAt: 100,
+    updatedAt: 200,
+  }])[0];
+
+  assert.equal(legacy.id, "legacy");
+  assert.equal(legacy.userConfirmed, true);
+  assert.equal(legacy.lastConfirmedAt, 200);
 });
 
 test("token estimation weighs CJK characters directly", () => {

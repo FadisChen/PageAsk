@@ -123,6 +123,14 @@ test("options page exposes the same Live thinking slider", async () => {
   assert.match(script, /describeLiveThinking/);
 });
 
+test("streaming transcript updates existing rows instead of rebuilding the full list", async () => {
+  const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
+  const renderer = panel.match(/function renderTranscript\(\) \{[\s\S]*?\r?\n\}\r?\n\r?\nfunction scheduleTranscriptRender/)?.[0] || "";
+  assert.match(renderer, /elements\.transcript\.children\[index\]/);
+  assert.match(renderer, /text\.textContent !== line\.text/);
+  assert.doesNotMatch(renderer, /replaceChildren\(\)/);
+});
+
 test("companion mode can start without a source and exposes local memory controls", async () => {
   const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
   const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
@@ -130,9 +138,12 @@ test("companion mode can start without a source and exposes local memory control
   assert.match(html, /id="companionModeButton"/);
   assert.match(html, /id="settingsCompanionPrompt"/);
   assert.match(html, /id="settingsMemoryEnabled"/);
+  assert.match(html, /id="settingsMemoryBudget"[^>]+max="12000"/);
   assert.match(html, /id="memoryList"/);
   assert.match(panel, /mode === "reading" && !state\.source/);
   assert.match(panel, /buildCompanionSystemInstruction/);
+  assert.match(panel, /fitMemoriesToBudget\(state\.memories, state\.activeMemoryConfig\.budgetTokens\)/);
+  assert.match(panel, /promptMemories\.memories\.map/);
   assert.match(panel, /processCompanionMemory/);
   assert.match(panel, /state\.memoryProcessing/);
 });
