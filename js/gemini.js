@@ -205,7 +205,7 @@ export async function runYoutubeVideoAnalysis(url, {
   const videoUrl = String(url || "").trim();
   if (!videoUrl) throw new Error("YouTube 影片分析缺少網址。");
   const prompt = String(question || "").trim() || "請提供這支影片的摘要與重點。";
-  const videoMetadata = {};
+  const videoMetadata = { fps: 0.5 };
   if (Number.isFinite(startOffsetSeconds)) videoMetadata.start_offset = `${Math.max(0, Math.floor(startOffsetSeconds))}s`;
   if (Number.isFinite(endOffsetSeconds)) videoMetadata.end_offset = `${Math.max(0, Math.floor(endOffsetSeconds))}s`;
 
@@ -219,7 +219,7 @@ export async function runYoutubeVideoAnalysis(url, {
         parts: [
           {
             file_data: { file_uri: videoUrl },
-            ...(Object.keys(videoMetadata).length ? { video_metadata: videoMetadata } : {}),
+            video_metadata: videoMetadata,
           },
           { text: prompt },
         ],

@@ -278,12 +278,12 @@ test("youtube analysis request sends the video as file_data with an optional tim
   assert.match(requestedUrl, new RegExp(`${GROUNDING_MODEL}:generateContent$`));
   const [videoPart, textPart] = requestedBody.contents[0].parts;
   assert.deepEqual(videoPart.file_data, { file_uri: "https://www.youtube.com/watch?v=xxxx" });
-  assert.deepEqual(videoPart.video_metadata, { start_offset: "30s", end_offset: "90s" });
+  assert.deepEqual(videoPart.video_metadata, { fps: 0.5, start_offset: "30s", end_offset: "90s" });
   assert.equal(textPart.text, "重點是什麼？");
   assert.equal(result.answer, "影片摘要");
 });
 
-test("youtube analysis request omits video_metadata and falls back to a default question", async () => {
+test("youtube analysis request defaults video_metadata to fps 0.5 and falls back to a default question", async () => {
   let requestedBody;
   const fetchImpl = async (_url, options) => {
     requestedBody = JSON.parse(options.body);
@@ -294,7 +294,7 @@ test("youtube analysis request omits video_metadata and falls back to a default 
   };
   await runYoutubeVideoAnalysis("https://youtu.be/xxxx", { apiKey: "key", fetchImpl });
   const [videoPart, textPart] = requestedBody.contents[0].parts;
-  assert.equal("video_metadata" in videoPart, false);
+  assert.deepEqual(videoPart.video_metadata, { fps: 0.5 });
   assert.equal(textPart.text, "請提供這支影片的摘要與重點。");
 });
 
