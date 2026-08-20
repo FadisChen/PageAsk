@@ -38,6 +38,9 @@ export const YOUTUBE_FUNCTION_DECLARATION = Object.freeze({
   },
 });
 
+const SPOKEN_RESPONSE_RULES = `- 回覆一律使用純文字的口語或自然對話方式，不要使用 Markdown 或其他格式標記，例如星號、井號、反引號、項目符號、標題、粗體、斜體、表格或程式碼區塊。
+- 需要列出多項內容時，改用自然連貫的句子或「第一、第二」等口頭說法，不要逐項使用符號。`;
+
 export function buildSystemInstruction(source) {
   const locator = source.url ? `網址：${source.url}` : `檔案類型：${source.mimeType || "文字"}`;
   const referenceText = String(source.text).replace(/<\s*\/?\s*reference\s*>/gi, "［來源邊界文字已移除］");
@@ -45,6 +48,7 @@ export function buildSystemInstruction(source) {
 
 ## 回應規則
 - 一律使用臺灣繁體中文與臺灣慣用詞，語氣自然、精確，適合口語聆聽。
+${SPOKEN_RESPONSE_RULES}
 - 優先根據下方參考來源回答；無法從來源判斷時要坦白說明。
 - 只有問題涉及目前、近期或來源之外且需要驗證的外部事實時，才呼叫 ground_with_google_search。
 - 只有使用者提供公開 YouTube 影片網址並要求摘要、重點整理或針對影片內容提問時，才呼叫 analyze_youtube_video。
@@ -64,6 +68,7 @@ ${referenceText}
 
 const COMPANION_FIXED_RULES = `## 固定互動規則
 - 一律使用臺灣繁體中文與臺灣慣用詞，語氣自然、精確，適合口語聆聽。
+${SPOKEN_RESPONSE_RULES}
 - 優先回應使用者本輪內容並延續目前話題；不要急著說教、診斷或替使用者下結論。
 - 只有問題涉及目前或近期且需要驗證的外部事實時，才呼叫 ground_with_google_search。
 - 只有使用者提供公開 YouTube 影片網址並要求摘要、重點整理或針對影片內容提問時，才呼叫 analyze_youtube_video。
