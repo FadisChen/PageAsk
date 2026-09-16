@@ -1,30 +1,14 @@
-import {
-  describeLiveThinking,
-  LIVE_MODEL_OPTIONS,
-  LIVE_THINKING_OPTIONS,
-  VOICES,
-} from "./js/constants.js";
+import { VOICES } from "./js/constants.js";
 import { checkRequiredModels, friendlyApiError } from "./js/gemini.js";
 import { loadSettings, saveSettings } from "./js/storage.js";
 
 const form = document.getElementById("settingsForm");
 const apiKeyInput = document.getElementById("apiKey");
-const liveModelSelect = document.getElementById("liveModel");
-const thinkingSlider = document.getElementById("liveThinkingLevel");
-const thinkingValue = document.getElementById("thinkingValue");
-const thinkingHint = document.getElementById("thinkingHint");
 const voiceSelect = document.getElementById("voiceName");
 const toggleKeyButton = document.getElementById("toggleKeyButton");
 const testButton = document.getElementById("testButton");
 const testStatus = document.getElementById("testStatus");
 const saveStatus = document.getElementById("saveStatus");
-
-for (const model of LIVE_MODEL_OPTIONS) {
-  const option = document.createElement("option");
-  option.value = model.id;
-  option.textContent = model.label;
-  liveModelSelect.appendChild(option);
-}
 
 for (const voice of VOICES) {
   const option = document.createElement("option");
@@ -35,16 +19,7 @@ for (const voice of VOICES) {
 
 const settings = await loadSettings();
 apiKeyInput.value = settings.apiKey;
-liveModelSelect.value = settings.liveModel;
-thinkingSlider.value = Math.max(
-  0,
-  LIVE_THINKING_OPTIONS.findIndex((option) => option.id === settings.liveThinkingLevel),
-);
 voiceSelect.value = settings.voiceName;
-renderThinking();
-
-liveModelSelect.addEventListener("change", renderThinking);
-thinkingSlider.addEventListener("input", renderThinking);
 
 toggleKeyButton.addEventListener("click", () => {
   const showing = apiKeyInput.type === "text";
@@ -56,10 +31,10 @@ testButton.addEventListener("click", async () => {
   const apiKey = apiKeyInput.value.trim();
   if (!apiKey) return showTestStatus("請先輸入 API key。", true);
   setBusy(testButton, true, "測試中…");
-  showTestStatus("正在確認兩個必要模型…");
+  showTestStatus("正在確認必要模型…");
   try {
-    await checkRequiredModels(apiKey, { liveModel: liveModelSelect.value });
-    showTestStatus("連線成功，兩個模型皆可存取。", false, true);
+    await checkRequiredModels(apiKey);
+    showTestStatus("連線成功，必要模型皆可存取。", false, true);
   } catch (error) {
     showTestStatus(friendlyApiError(error), true);
   } finally {
@@ -74,22 +49,10 @@ form.addEventListener("submit", async (event) => {
   await saveSettings({
     ...settings,
     apiKey,
-    liveModel: liveModelSelect.value,
-    liveThinkingLevel: selectedThinkingOption().id,
     voiceName: voiceSelect.value,
   });
   showSaveStatus("設定已儲存。", false);
 });
-
-function selectedThinkingOption() {
-  return LIVE_THINKING_OPTIONS[Number(thinkingSlider.value)] || LIVE_THINKING_OPTIONS[0];
-}
-
-function renderThinking() {
-  const option = selectedThinkingOption();
-  thinkingValue.value = option.label;
-  thinkingHint.textContent = describeLiveThinking(liveModelSelect.value, option.id);
-}
 
 function showTestStatus(message, isError = false, isSuccess = false) {
   testStatus.textContent = message;

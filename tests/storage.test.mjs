@@ -4,9 +4,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_COMPANION_SYSTEM_PROMPT,
   DEFAULT_LIVE_MODEL,
-  DEFAULT_LIVE_THINKING_LEVEL,
   LIVE_MODEL_OPTIONS,
-  LIVE_THINKING_OPTIONS,
 } from "../js/constants.js";
 import {
   cleanHistory,
@@ -23,7 +21,6 @@ test("legacy settings receive companion defaults without losing existing values"
   const settings = cleanSettings({ apiKey: " key ", voiceName: "Aoede" });
   assert.equal(settings.apiKey, "key");
   assert.equal(settings.liveModel, DEFAULT_LIVE_MODEL);
-  assert.equal(settings.liveThinkingLevel, DEFAULT_LIVE_THINKING_LEVEL);
   assert.equal(settings.voiceName, "Aoede");
   assert.equal(settings.conversationMode, "reading");
   assert.equal(settings.companionSystemPrompt, DEFAULT_COMPANION_SYSTEM_PROMPT);
@@ -31,17 +28,10 @@ test("legacy settings receive companion defaults without losing existing values"
   assert.equal(settings.companionMemoryBudgetTokens, 3000);
 });
 
-test("supported Live model is preserved and unknown values fall back to 3.1", () => {
+test("only Gemini 3.8 Live is preserved and unknown values fall back to it", () => {
   assert.equal(cleanSettings({ liveModel: LIVE_MODEL_OPTIONS[0].id }).liveModel, LIVE_MODEL_OPTIONS[0].id);
   assert.equal(cleanSettings({ liveModel: "unknown-live-model" }).liveModel, DEFAULT_LIVE_MODEL);
-});
-
-test("supported Live thinking strength is preserved and unknown values use automatic", () => {
-  assert.equal(
-    cleanSettings({ liveThinkingLevel: LIVE_THINKING_OPTIONS[3].id }).liveThinkingLevel,
-    LIVE_THINKING_OPTIONS[3].id,
-  );
-  assert.equal(cleanSettings({ liveThinkingLevel: "EXTREME" }).liveThinkingLevel, DEFAULT_LIVE_THINKING_LEVEL);
+  assert.equal("liveThinkingLevel" in cleanSettings({ liveThinkingLevel: "HIGH" }), false);
 });
 
 test("companion settings are validated and bounded", () => {

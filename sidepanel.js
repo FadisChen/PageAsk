@@ -1,9 +1,7 @@
 import { BrowserAudioEngine } from "./js/audio.js";
 import {
   DEFAULT_COMPANION_SYSTEM_PROMPT,
-  describeLiveThinking,
-  LIVE_MODEL_OPTIONS,
-  LIVE_THINKING_OPTIONS,
+  DEFAULT_LIVE_MODEL,
   MESSAGE_TYPES,
   SOURCE_KEY,
   VOICES,
@@ -108,7 +106,7 @@ const elements = Object.fromEntries([
   "microphoneNotice", "microphonePermissionTitle", "microphonePermissionText", "openMicrophoneSettingsButton",
   "textOnlyMode",
   "settingsDialog", "panelSettingsForm", "settingsCloseButton", "settingsCancelButton",
-  "settingsApiKey", "settingsToggleKeyButton", "settingsLiveModel", "settingsThinkingLevel", "settingsThinkingValue", "settingsThinkingHint",
+  "settingsApiKey", "settingsToggleKeyButton",
   "settingsVoiceName", "settingsTestButton", "settingsTestStatus",
   "settingsCompanionPrompt", "settingsResetPromptButton", "settingsMemoryEnabled", "settingsMemoryBudget",
   "memoryUsage", "newMemoryButton", "newMemoryEditor", "newMemoryContent", "newMemoryLocked",
@@ -143,13 +141,6 @@ const state = {
 
 renderAll();
 
-for (const model of LIVE_MODEL_OPTIONS) {
-  const option = document.createElement("option");
-  option.value = model.id;
-  option.textContent = model.label;
-  elements.settingsLiveModel.appendChild(option);
-}
-
 for (const voice of VOICES) {
   const option = document.createElement("option");
   option.value = voice;
@@ -173,8 +164,6 @@ elements.historyList.addEventListener("change", handleHistoryListChange);
 elements.settingsCloseButton.addEventListener("click", closeSettings);
 elements.settingsCancelButton.addEventListener("click", closeSettings);
 elements.settingsToggleKeyButton.addEventListener("click", toggleSettingsKey);
-elements.settingsLiveModel.addEventListener("change", renderSettingsThinking);
-elements.settingsThinkingLevel.addEventListener("input", renderSettingsThinking);
 elements.settingsTestButton.addEventListener("click", testAndSaveSettings);
 elements.settingsResetPromptButton.addEventListener("click", () => {
   elements.settingsCompanionPrompt.value = DEFAULT_COMPANION_SYSTEM_PROMPT;
@@ -348,8 +337,7 @@ async function startSession() {
     if (useMicrophone) renderMicrophonePermission("granted");
     state.session = new LiveSession({
       apiKey: state.settings.apiKey,
-      liveModel: state.settings.liveModel,
-      liveThinkingLevel: state.settings.liveThinkingLevel,
+      liveModel: DEFAULT_LIVE_MODEL,
       voiceName: state.settings.voiceName,
       systemInstruction,
       autoContinueIncompleteText: !useMicrophone,
@@ -381,11 +369,6 @@ async function openSettings() {
   state.settings = await loadSettings();
   state.memories = await loadMemories();
   elements.settingsApiKey.value = state.settings.apiKey;
-  elements.settingsLiveModel.value = state.settings.liveModel;
-  elements.settingsThinkingLevel.value = Math.max(
-    0,
-    LIVE_THINKING_OPTIONS.findIndex((option) => option.id === state.settings.liveThinkingLevel),
-  );
   elements.settingsVoiceName.value = state.settings.voiceName;
   elements.settingsCompanionPrompt.value = state.settings.companionSystemPrompt;
   elements.settingsMemoryEnabled.checked = state.settings.companionMemoryEnabled;
@@ -393,7 +376,6 @@ async function openSettings() {
   elements.settingsApiKey.type = "password";
   elements.settingsToggleKeyButton.textContent = "顯示";
   closeNewMemoryEditor();
-  renderSettingsThinking();
   renderMemoryList();
   showSettingsTestStatus("");
   if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
@@ -510,10 +492,8 @@ async function testAndSaveSettings() {
   setBusy(elements.settingsTestButton, true, "測試中…");
   showSettingsTestStatus("正在建立實際 Live 工作階段…");
   try {
-    await checkRequiredModels(next.apiKey, { liveModel: next.liveModel });
+    await checkRequiredModels(next.apiKey);
     await probeLiveModel(next.apiKey, {
-      liveModel: next.liveModel,
-      liveThinkingLevel: next.liveThinkingLevel,
       voiceName: next.voiceName,
     });
     state.settings = await saveSettings(next);
@@ -550,23 +530,11 @@ function readSettingsForm() {
   return {
     ...state.settings,
     apiKey,
-    liveModel: elements.settingsLiveModel.value,
-    liveThinkingLevel: selectedThinkingOption(elements.settingsThinkingLevel).id,
     voiceName: elements.settingsVoiceName.value,
     companionSystemPrompt: elements.settingsCompanionPrompt.value,
     companionMemoryEnabled: elements.settingsMemoryEnabled.checked,
     companionMemoryBudgetTokens: Number(elements.settingsMemoryBudget.value),
   };
-}
-
-function selectedThinkingOption(slider) {
-  return LIVE_THINKING_OPTIONS[Number(slider.value)] || LIVE_THINKING_OPTIONS[0];
-}
-
-function renderSettingsThinking() {
-  const option = selectedThinkingOption(elements.settingsThinkingLevel);
-  elements.settingsThinkingValue.value = option.label;
-  elements.settingsThinkingHint.textContent = describeLiveThinking(elements.settingsLiveModel.value, option.id);
 }
 
 function showSettingsTestStatus(message, isError = false, isSuccess = false) {

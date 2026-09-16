@@ -2,7 +2,6 @@ import {
   CONVERSATION_MODES,
   DEFAULT_SETTINGS,
   getLiveModelOption,
-  getLiveThinkingOption,
   HISTORY_KEY,
   MAX_COMPANION_PROMPT_CHARS,
   MAX_HISTORY_ENTRY_CHARS,
@@ -30,7 +29,6 @@ export function cleanSettings(value) {
   return {
     apiKey: typeof settings.apiKey === "string" ? settings.apiKey.trim() : DEFAULT_SETTINGS.apiKey,
     liveModel: getLiveModelOption(settings.liveModel).id,
-    liveThinkingLevel: getLiveThinkingOption(settings.liveThinkingLevel).id,
     voiceName: VOICES.includes(settings.voiceName) ? settings.voiceName : DEFAULT_SETTINGS.voiceName,
     conversationMode: CONVERSATION_MODES.includes(settings.conversationMode)
       ? settings.conversationMode

@@ -29,15 +29,15 @@ test("HTML IDs are unique and all script resources are local", async () => {
   }
 });
 
-test("production source contains no unapproved models or fallback providers", async () => {
+test("production source contains only the approved models and no fallback providers", async () => {
   const files = await collectJavaScript(root);
   const productionFiles = files.filter((file) => !file.includes(`${path.sep}tests${path.sep}`));
   const source = (await Promise.all(productionFiles.map((file) => readFile(file, "utf8")))).join("\n");
   const modelNames = [...source.matchAll(/gemini-[a-z0-9.-]+/gi)].map((match) => match[0]);
   assert.deepEqual([...new Set(modelNames)].sort(), [
     "gemini-2.5-flash",
-    "gemini-2.5-flash-native-audio-preview-12-2025",
-    "gemini-3.1-flash-live-preview",
+    "gemini-3.8-flash",
+    "gemini-3.8-live",
   ]);
   assert.doesNotMatch(source, /tavily|googleMaps|<all_urls>/i);
 });
@@ -65,8 +65,9 @@ test("settings stay inside the side panel dialog", async () => {
   const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
   const script = await readFile(path.join(root, "sidepanel.js"), "utf8");
   assert.match(html, /<dialog[^>]+id="settingsDialog"/);
-  assert.match(html, /id="settingsLiveModel"/);
-  assert.match(html, /id="settingsThinkingLevel"[^>]+type="range"/);
+  assert.match(html, /固定使用 Gemini 3\.8 Live/);
+  assert.doesNotMatch(html, /settingsLiveModel/);
+  assert.doesNotMatch(html, /thinkingLevel|thinkingConfig/);
   assert.match(script, /settingsDialog\.showModal\(\)/);
   assert.doesNotMatch(script, /openOptionsPage/);
 });
@@ -115,12 +116,13 @@ test("text-only mode starts Live without requesting microphone capture", async (
   assert.match(panel, /requestAnimationFrame\(\(\) => \{/);
 });
 
-test("options page exposes the same Live thinking slider", async () => {
+test("options page exposes only the Gemini 3.8 Live settings", async () => {
   const html = await readFile(path.join(root, "options.html"), "utf8");
   const script = await readFile(path.join(root, "options.js"), "utf8");
-  assert.match(html, /id="liveThinkingLevel"[^>]+type="range"/);
-  assert.match(script, /liveThinkingLevel/);
-  assert.match(script, /describeLiveThinking/);
+  assert.match(html, /Live 模型固定使用 Gemini 3\.8 Live/);
+  assert.doesNotMatch(html, /id="liveModel"/);
+  assert.doesNotMatch(html, /thinkingLevel|thinkingConfig/);
+  assert.doesNotMatch(script, /liveThinking|describeLiveThinking/);
 });
 
 test("streaming transcript updates existing rows instead of rebuilding the full list", async () => {

@@ -134,21 +134,8 @@
         </div>
 
         <div class="dialog-field">
-          <label for="settingsLiveModel">Gemini Live 模型</label>
-          <p>2.5 支援非同步搜尋；3.1 通常延遲較低，但搜尋時會等待工具結果。</p>
-          <select id="settingsLiveModel"></select>
-        </div>
-
-        <div class="dialog-field thinking-field">
-          <label class="thinking-label" for="settingsThinkingLevel">
-            <span>思考強度</span>
-            <output id="settingsThinkingValue" for="settingsThinkingLevel">自動</output>
-          </label>
-          <input class="thinking-range" id="settingsThinkingLevel" type="range" min="0" max="4" step="1" value="0">
-          <div class="thinking-scale" aria-hidden="true">
-            <span>自動</span><span>Minimal</span><span>Low</span><span>Medium</span><span>High</span>
-          </div>
-          <p class="thinking-description" id="settingsThinkingHint"></p>
+          <label>Gemini Live 模型</label>
+          <p>固定使用 Gemini 3.8 Live，支援低延遲語音對談與非同步工具呼叫。</p>
         </div>
 
         <div class="dialog-field">

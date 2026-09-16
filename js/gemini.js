@@ -1,9 +1,8 @@
 import {
   API_BASE,
+  AUXILIARY_MODEL,
   DEFAULT_LIVE_MODEL,
-  DEFAULT_LIVE_THINKING_LEVEL,
   getLiveModelOption,
-  getLiveThinkingOption,
   GROUNDING_MODEL,
   MAX_MEMORY_CHARS,
   WS_BASE,
@@ -117,6 +116,7 @@ export async function checkRequiredModels(apiKey, {
   const models = [
     { id: selectedLiveModel, requiredMethod: "bidiGenerateContent" },
     { id: GROUNDING_MODEL, requiredMethod: "generateContent" },
+    { id: AUXILIARY_MODEL, requiredMethod: "generateContent" },
   ];
   await Promise.all(models.map(async ({ id, requiredMethod }) => {
     const response = await fetchImpl(`${API_BASE}/models/${encodeURIComponent(id)}`, {
@@ -134,7 +134,6 @@ export async function checkRequiredModels(apiKey, {
 
 export function probeLiveModel(apiKey, {
   liveModel = DEFAULT_LIVE_MODEL,
-  liveThinkingLevel = DEFAULT_LIVE_THINKING_LEVEL,
   voiceName = "Kore",
   WebSocketImpl = globalThis.WebSocket,
   timeoutMs = 10000,
@@ -159,7 +158,7 @@ export function probeLiveModel(apiKey, {
     }
 
     socket.onopen = () => {
-      const session = new LiveSession({ apiKey, liveModel, liveThinkingLevel, voiceName, systemInstruction });
+      const session = new LiveSession({ apiKey, liveModel, voiceName, systemInstruction });
       socket.send(JSON.stringify(session.setupMessage()));
     };
     socket.onmessage = async (event) => {
@@ -188,7 +187,6 @@ export async function runGrounding(query, { apiKey, signal, fetchImpl = fetch } 
     signal,
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: normalizedQuery }] }],
-      generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
       tools: [{ google_search: {} }],
     }),
   });
@@ -214,7 +212,7 @@ export async function runYoutubeVideoAnalysis(url, {
   if (Number.isFinite(startOffsetSeconds)) videoMetadata.start_offset = `${Math.max(0, Math.floor(startOffsetSeconds))}s`;
   if (Number.isFinite(endOffsetSeconds)) videoMetadata.end_offset = `${Math.max(0, Math.floor(endOffsetSeconds))}s`;
 
-  const response = await fetchImpl(`${API_BASE}/models/${GROUNDING_MODEL}:generateContent`, {
+  const response = await fetchImpl(`${API_BASE}/models/${AUXILIARY_MODEL}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     signal,
@@ -233,7 +231,7 @@ export async function runYoutubeVideoAnalysis(url, {
     }),
   });
   const data = await readJson(response);
-  if (!response.ok) throw httpErrorFromData(response, data, GROUNDING_MODEL);
+  if (!response.ok) throw httpErrorFromData(response, data, AUXILIARY_MODEL);
   const answer = (data?.candidates?.[0]?.content?.parts || [])
     .filter((part) => typeof part.text === "string" && part.thought !== true)
     .map((part) => part.text)
@@ -344,13 +342,12 @@ export function cleanMemoryOperations(values, existing = [], allowedActions = ["
 }
 
 async function generateMemoryOperations(apiKey, prompt, existing, allowedActions, fetchImpl) {
-  const response = await fetchImpl(`${API_BASE}/models/${GROUNDING_MODEL}:generateContent`, {
+  const response = await fetchImpl(`${API_BASE}/models/${AUXILIARY_MODEL}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        thinkingConfig: { thinkingBudget: 0 },
         responseMimeType: "application/json",
         responseSchema: {
           type: "ARRAY",
@@ -368,7 +365,7 @@ async function generateMemoryOperations(apiKey, prompt, existing, allowedActions
     }),
   });
   const data = await readJson(response);
-  if (!response.ok) throw httpErrorFromData(response, data, GROUNDING_MODEL);
+  if (!response.ok) throw httpErrorFromData(response, data, AUXILIARY_MODEL);
   const text = (data?.candidates?.[0]?.content?.parts || [])
     .filter((part) => typeof part.text === "string" && part.thought !== true)
     .map((part) => part.text)
@@ -424,12 +421,12 @@ export function parseGroundingResponse(data) {
   return { answer, sources };
 }
 
-export function createGroundingFunctionResponse(call, result, asyncToolCalling = true) {
+export function createGroundingFunctionResponse(call, result) {
   const response = {
     result: result.answer,
     sources: result.sources,
+    scheduling: "WHEN_IDLE",
   };
-  if (asyncToolCalling) response.scheduling = "WHEN_IDLE";
   return {
     id: call.id,
     name: call.name,
@@ -437,9 +434,8 @@ export function createGroundingFunctionResponse(call, result, asyncToolCalling =
   };
 }
 
-export function createYoutubeAnalysisFunctionResponse(call, result, asyncToolCalling = true) {
-  const response = { result: result.answer };
-  if (asyncToolCalling) response.scheduling = "WHEN_IDLE";
+export function createYoutubeAnalysisFunctionResponse(call, result) {
+  const response = { result: result.answer, scheduling: "WHEN_IDLE" };
   return { id: call.id, name: call.name, response };
 }
 
@@ -447,7 +443,6 @@ export class LiveSession {
   constructor(config, callbacks = {}) {
     this.config = config;
     this.modelOption = getLiveModelOption(config.liveModel);
-    this.thinkingOption = getLiveThinkingOption(config.liveThinkingLevel);
     this.callbacks = callbacks;
     this.socket = null;
     this.ready = false;
@@ -498,23 +493,14 @@ export class LiveSession {
   }
 
   setupMessage() {
-    const groundingDeclaration = this.modelOption.asyncToolCalling
-      ? { ...GROUNDING_FUNCTION_DECLARATION, behavior: "NON_BLOCKING" }
-      : GROUNDING_FUNCTION_DECLARATION;
-    const youtubeDeclaration = this.modelOption.asyncToolCalling
-      ? { ...YOUTUBE_FUNCTION_DECLARATION, behavior: "NON_BLOCKING" }
-      : YOUTUBE_FUNCTION_DECLARATION;
+    const groundingDeclaration = { ...GROUNDING_FUNCTION_DECLARATION, behavior: "NON_BLOCKING" };
+    const youtubeDeclaration = { ...YOUTUBE_FUNCTION_DECLARATION, behavior: "NON_BLOCKING" };
     const generationConfig = {
       responseModalities: ["AUDIO"],
       speechConfig: {
         voiceConfig: { prebuiltVoiceConfig: { voiceName: this.config.voiceName || "Kore" } },
       },
     };
-    if (this.thinkingOption.id !== "AUTO") {
-      generationConfig.thinkingConfig = this.modelOption.asyncToolCalling
-        ? { thinkingBudget: this.thinkingOption.thinkingBudget }
-        : { thinkingLevel: this.thinkingOption.id };
-    }
     return {
       setup: {
         model: `models/${this.modelOption.id}`,
@@ -522,7 +508,7 @@ export class LiveSession {
         systemInstruction: { parts: [{ text: this.config.systemInstruction }] },
         realtimeInputConfig: {
           automaticActivityDetection: { disabled: false },
-          turnCoverage: "TURN_INCLUDES_ONLY_ACTIVITY",
+          turnCoverage: "TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO",
         },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
@@ -567,7 +553,12 @@ export class LiveSession {
     if (!value || !this.ready) return false;
     if (this.turnCompletionTimer) this.finishPendingTurn();
     this.autoContinueCount = 0;
-    this.send({ realtimeInput: { text: value } });
+    this.send({
+      clientContent: {
+        turns: [{ role: "user", parts: [{ text: value }] }],
+        turnComplete: true,
+      },
+    });
     this.callbacks.onStatus?.("speaking");
     return true;
   }
@@ -643,7 +634,6 @@ export class LiveSession {
     this.queueToolResponse(createGroundingFunctionResponse(
       call,
       { answer: "不支援的工具。", sources: [] },
-      this.modelOption.asyncToolCalling,
     ));
   }
 
@@ -657,7 +647,7 @@ export class LiveSession {
       const result = await runGrounding(query, { apiKey: this.config.apiKey, signal: controller.signal });
       if (this.stopped || runId !== this.runId || controller.signal.aborted) return;
       this.callbacks.onGrounding?.({ id: call.id, query, status: "complete", result });
-      this.queueToolResponse(createGroundingFunctionResponse(call, result, this.modelOption.asyncToolCalling));
+      this.queueToolResponse(createGroundingFunctionResponse(call, result));
     } catch (error) {
       if (controller.signal.aborted || runId !== this.runId) return;
       const message = friendlyApiError(error);
@@ -665,7 +655,6 @@ export class LiveSession {
       this.queueToolResponse(createGroundingFunctionResponse(
         call,
         { answer: `查詢失敗：${message}`, sources: [] },
-        this.modelOption.asyncToolCalling,
       ));
     } finally {
       this.toolJobs.delete(call.id);
@@ -691,7 +680,7 @@ export class LiveSession {
       });
       if (this.stopped || runId !== this.runId || controller.signal.aborted) return;
       this.callbacks.onYoutubeAnalysis?.({ id: call.id, url, question, status: "complete", result });
-      this.queueToolResponse(createYoutubeAnalysisFunctionResponse(call, result, this.modelOption.asyncToolCalling));
+      this.queueToolResponse(createYoutubeAnalysisFunctionResponse(call, result));
     } catch (error) {
       if (controller.signal.aborted || runId !== this.runId) return;
       const message = friendlyApiError(error);
@@ -699,7 +688,6 @@ export class LiveSession {
       this.queueToolResponse(createYoutubeAnalysisFunctionResponse(
         call,
         { answer: `影片分析失敗：${message}` },
-        this.modelOption.asyncToolCalling,
       ));
     } finally {
       this.toolJobs.delete(call.id);
@@ -743,8 +731,12 @@ export class LiveSession {
         this.autoContinueCount += 1;
         this.callbacks.onDebug?.(`文字回應停在半句，自動續接（${this.autoContinueCount}/2）。`);
         this.send({
-          realtimeInput: {
-            text: "上一段最後一句尚未完成。請直接補完並自然接續必要內容；不要致歉、不要提到接續，也不要重複已輸出的文字。完成一個自然段落後停止。",
+          clientContent: {
+            turns: [{
+              role: "user",
+              parts: [{ text: "上一段最後一句尚未完成。請直接補完並自然接續必要內容；不要致歉、不要提到接續，也不要重複已輸出的文字。完成一個自然段落後停止。" }],
+            }],
+            turnComplete: true,
           },
         });
         this.callbacks.onStatus?.("speaking");
