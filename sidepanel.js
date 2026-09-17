@@ -111,7 +111,7 @@ export class TranscriptCollector {
 const elements = Object.fromEntries([
   "settingsButton", "historyButton", "readingModeButton", "companionModeButton",
   "sourceSection", "sourceState", "sourceCard", "sourceKind", "sourceTitle", "sourcePreview",
-  "sourceLink", "sourceWarning", "pickBlockButton", "uploadButton", "fileInput",
+  "sourceLink", "sourceWarning", "pickBlockButton", "uploadButton", "fileInput", "clearSourceButton",
   "conversationHeading", "connectionPill", "connectionText", "voiceStage", "levelBar", "avatarCanvas", "avatarFallback",
   "enableBrowserToolsButton",
   "sourceDetailsButton", "sourceSummaryTitle", "sourceDialog", "sourceCloseButton",
@@ -126,7 +126,7 @@ const elements = Object.fromEntries([
   "settingsCompanionPrompt", "settingsResetPromptButton", "settingsMemoryEnabled", "settingsMemoryBudget",
   "memoryUsage", "newMemoryButton", "newMemoryEditor", "newMemoryContent", "newMemoryLocked",
   "saveNewMemoryButton", "cancelNewMemoryButton", "memoryList",
-  "historyDialog", "historyCloseButton", "historySearchInput", "exportAllHistoryButton", "historyList",
+  "historyDialog", "historyCloseButton", "historySearchInput", "exportAllHistoryButton", "deleteAllHistoryButton", "historyList",
 ].map((id) => [id, document.getElementById(id)]));
 
 let microphonePermissionStatus = null;
@@ -143,6 +143,7 @@ const pendingConfirmations = new Map();
 const state = {
   settings: await loadSettings(),
   source: await loadSource(),
+  sessionSources: [],
   memories: await loadMemories(),
   history: await loadHistory(),
   session: null,
@@ -186,6 +187,7 @@ elements.historySearchInput.addEventListener("input", () => {
   renderHistoryList();
 });
 elements.exportAllHistoryButton.addEventListener("click", exportAllHistory);
+elements.deleteAllHistoryButton.addEventListener("click", deleteAllHistory);
 elements.historyList.addEventListener("click", handleHistoryListClick);
 elements.historyList.addEventListener("change", handleHistoryListChange);
 elements.settingsCloseButton.addEventListener("click", closeSettings);
@@ -208,6 +210,7 @@ elements.settingsDialog.addEventListener("click", (event) => {
 elements.readingModeButton.addEventListener("click", () => setConversationMode("reading"));
 elements.companionModeButton.addEventListener("click", () => setConversationMode("companion"));
 elements.pickBlockButton.addEventListener("click", startBlockPicker);
+elements.clearSourceButton.addEventListener("click", clearCurrentSource);
 elements.uploadButton.addEventListener("click", () => elements.fileInput.click());
 elements.fileInput.addEventListener("change", handleFileUpload);
 elements.startButton.addEventListener("click", startSession);
@@ -247,22 +250,15 @@ elements.confirmationItems.addEventListener("click", handleConfirmationClick);
 void monitorMicrophonePermission();
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type === MESSAGE_TYPES.SOURCE_UPDATED && !state.started) {
-    state.source = message.source;
-    renderSource();
-    renderControls();
-    toast("已加入新的網頁來源。 ");
-  } else if (message?.type === MESSAGE_TYPES.BLOCK_PICK_CANCELLED) {
+  if (message?.type === MESSAGE_TYPES.BLOCK_PICK_CANCELLED) {
     toast("已取消選取。 ");
   }
 });
 
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "session" && SOURCE_KEY in changes && !state.started) {
-    state.source = changes[SOURCE_KEY].newValue || null;
-    renderSource();
-    renderControls();
+  if (areaName === "session" && SOURCE_KEY in changes) {
+    applySource(changes[SOURCE_KEY].newValue || null);
   }
 });
 
@@ -278,6 +274,29 @@ async function clearTemporaryContent() {
   followTranscript = true;
   state.source = null;
   await clearSource();
+}
+
+function applySource(source) {
+  if (JSON.stringify(state.source) === JSON.stringify(source)) return;
+  state.source = source;
+  if (state.started && !state.ending && state.activeMode === "reading") {
+    state.session?.updateSource(source);
+    if (source && !state.sessionSources.some((item) => item.title === source.title)) {
+      state.sessionSources.push({ title: source.title });
+    }
+  }
+  renderSource();
+  renderControls();
+}
+
+async function clearCurrentSource() {
+  try {
+    await clearSource();
+    applySource(null);
+    toast("已清空目前來源，可以重新選取網頁內容或上傳檔案。");
+  } catch (error) {
+    toast(`清空來源失敗：${error.message}`, true);
+  }
 }
 
 async function initializeAvatar() {
@@ -340,7 +359,7 @@ async function enableBrowserTools() {
 }
 
 async function startBlockPicker() {
-  if (state.started) return;
+  if (state.ending || state.memoryProcessing) return;
   setBusy(elements.pickBlockButton, true, "等待選取…");
   try {
     const pageAccessGranted = await chrome.permissions.request({ permissions: PAGE_ACCESS_PERMISSIONS, origins: BROWSER_TOOL_ORIGINS });
@@ -362,15 +381,13 @@ async function startBlockPicker() {
 async function handleFileUpload(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
-  if (!file || state.started) return;
+  if (!file || state.ending || state.memoryProcessing) return;
   setBusy(elements.uploadButton, true, "解析中…");
   try {
     const text = await parseSourceFile(file);
     const source = createActiveSource({ kind: "file", title: file.name, mimeType: file.type, text });
     await saveSource(source);
-    state.source = source;
-    renderSource();
-    renderControls();
+    applySource(source);
     toast(source.truncated
       ? "檔案已載入，超出 Live 來源上限的部分已截斷。"
       : source.tokenWarning
@@ -406,6 +423,7 @@ async function startSession() {
   state.started = true;
   state.sessionStartedAt = Date.now();
   state.activeMode = mode;
+  state.sessionSources = mode === "reading" && state.source ? [{ title: state.source.title }] : [];
   state.activeMemoryEnabled = mode === "companion" && state.settings.companionMemoryEnabled;
   state.activeMemoryConfig = state.activeMemoryEnabled ? {
     apiKey: state.settings.apiKey,
@@ -425,6 +443,7 @@ async function startSession() {
   setStatus(useMicrophone ? "permission" : "connecting");
   renderAll();
 
+  const initialSource = state.source;
   const systemInstruction = mode === "companion"
     ? buildCompanionSystemInstruction(
       state.settings.companionSystemPrompt,
@@ -473,6 +492,7 @@ async function startSession() {
       },
     });
     state.session.start();
+    if (mode === "reading" && state.source !== initialSource) state.session.updateSource(state.source);
   } catch (error) {
     if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
       renderMicrophonePermission("denied");
@@ -695,7 +715,7 @@ async function endSession(showNotice = true, processMemory = true) {
   if (transcript.length) {
     const entry = createHistoryEntry({
       mode: completedMode,
-      sources: completedMode === "reading" && state.source ? [state.source] : [],
+      sources: completedMode === "reading" ? state.sessionSources : [],
       transcript,
       startedAt: state.sessionStartedAt,
       endedAt: Date.now(),
@@ -1065,6 +1085,7 @@ function closeHistory() {
 }
 
 function renderHistoryList() {
+  elements.deleteAllHistoryButton.disabled = !state.history.length || state.ending;
   const entries = state.history
     .filter((entry) => matchesHistorySearch(entry, state.historyQuery))
     .sort((a, b) => b.endedAt - a.endedAt);
@@ -1184,6 +1205,22 @@ async function handleHistoryListClick(event) {
   }
 }
 
+async function deleteAllHistory() {
+  if (!state.history.length || state.ending) return;
+  if (!confirm(`確定要刪除全部 ${state.history.length} 筆歷史紀錄嗎？包含已釘選及搜尋結果以外的紀錄，刪除後無法復原。正在進行的對話仍會在結束時另存新紀錄。`)) return;
+  elements.deleteAllHistoryButton.disabled = true;
+  try {
+    state.history = await saveHistory([]);
+    state.historyQuery = "";
+    elements.historySearchInput.value = "";
+    toast("已刪除全部歷史紀錄。");
+  } catch (error) {
+    toast(`刪除歷史紀錄失敗：${error.message}`, true);
+  } finally {
+    renderHistoryList();
+  }
+}
+
 function exportAllHistory() {
   if (!state.history.length) return toast("目前沒有歷史紀錄可以匯出。", true);
   downloadMarkdown("pageask-history.md", exportHistoryListToMarkdown([...state.history].sort((a, b) => b.endedAt - a.endedAt)));
@@ -1283,8 +1320,9 @@ function renderControls() {
   const controlsLocked = state.started || state.ending || state.memoryProcessing;
   const requiresSource = state.settings.conversationMode === "reading";
   const textOnly = elements.textOnlyMode.checked;
-  elements.pickBlockButton.disabled = controlsLocked;
-  elements.uploadButton.disabled = controlsLocked;
+  elements.pickBlockButton.disabled = state.ending || state.memoryProcessing;
+  elements.uploadButton.disabled = state.ending || state.memoryProcessing;
+  elements.clearSourceButton.disabled = !state.source || state.ending || state.memoryProcessing;
   elements.startButton.disabled = controlsLocked || (requiresSource && !state.source);
   elements.textOnlyMode.disabled = controlsLocked;
   elements.muteButton.disabled = !state.started || state.ending || !state.microphoneActive;

@@ -39,6 +39,7 @@
       <div class="source-actions">
         <button class="button button-secondary" id="pickBlockButton" type="button">選取網頁區塊</button>
         <button class="button button-secondary" id="uploadButton" type="button">上傳檔案</button>
+        <button class="button button-secondary" id="clearSourceButton" type="button" disabled>清空來源</button>
         <input id="fileInput" type="file" accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain,text/markdown,text/csv,application/json" hidden>
       </div>
     </section>
@@ -236,6 +237,7 @@
       <div class="history-toolbar">
         <input class="history-search-input" id="historySearchInput" type="search" placeholder="搜尋標題、人格或逐字稿內容…" aria-label="搜尋歷史紀錄">
         <button class="button button-secondary button-small" id="exportAllHistoryButton" type="button">全部匯出</button>
+        <button class="button button-secondary button-small" id="deleteAllHistoryButton" type="button" disabled>全部刪除</button>
       </div>
       <div class="history-list" id="historyList"></div>
     </div>
