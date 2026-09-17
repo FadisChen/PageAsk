@@ -592,6 +592,25 @@ test("Avatar tools animate without publishing tool feed events", () => {
   assert.deepEqual(events, []);
 });
 
+test("Avatar calls in one toolCall are answered in a single toolResponse", () => {
+  const sent = [];
+  const session = new LiveSession({ apiKey: "test" }, {});
+  session.ready = true;
+  session.socket = { readyState: 1, send: (payload) => sent.push(JSON.parse(payload)) };
+  const originalWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = { OPEN: 1 };
+  try {
+    session.handleMessage({ toolCall: { functionCalls: [
+      { id: "gesture", name: "play_avatar_gesture", args: { gesture: "bow" } },
+      { id: "emotion", name: "set_avatar_emotion", args: { emotion: "happy" } },
+    ] } });
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].toolResponse.functionResponses.map((response) => response.id), ["gesture", "emotion"]);
+});
+
 test("tool transcript filtering preserves normal response wording at turn completion", () => {
   const received = [];
   const session = new LiveSession({ apiKey: "test" }, { onModelTranscript: text => received.push(text) });

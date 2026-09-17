@@ -470,6 +470,7 @@ export class LiveSession {
     this.runId = 0;
     this.toolJobs = new Map();
     this.pendingToolResponses = [];
+    this.toolResponseBatch = null;
     this.modelTranscript = "";
     this.rawModelTranscript = "";
     this.autoContinueCount = 0;
@@ -656,7 +657,17 @@ export class LiveSession {
     }
 
     if (message.toolCall?.functionCalls?.length) {
-      for (const call of message.toolCall.functionCalls) void this.handleToolCall(call);
+      // 同一則 toolCall 中能立即完成的結果（Avatar 表情、動作等）合併成一則 toolResponse：
+      // 非同步 tool 的每則回覆都可能讓 Gemini 再產生一段話，分開送會造成重複發言。
+      // 需要等待的 tool（grounding、YouTube、自訂 handler）完成時仍各自送出。
+      this.toolResponseBatch = [];
+      try {
+        for (const call of message.toolCall.functionCalls) void this.handleToolCall(call);
+      } finally {
+        const batch = this.toolResponseBatch;
+        this.toolResponseBatch = null;
+        if (batch.length) this.sendToolResponses(batch);
+      }
     }
     if (message.toolCallCancellation?.ids?.length) this.cancelToolCalls(message.toolCallCancellation.ids);
     if (message.goAway && this.socket?.readyState === WebSocket.OPEN) {
@@ -782,10 +793,15 @@ export class LiveSession {
   }
 
   queueToolResponse(response) {
+    if (this.toolResponseBatch) this.toolResponseBatch.push(response);
+    else this.sendToolResponses([response]);
+  }
+
+  sendToolResponses(responses) {
     if (this.ready && this.socket?.readyState === WebSocket.OPEN) {
-      this.send({ toolResponse: { functionResponses: [response] } });
+      this.send({ toolResponse: { functionResponses: responses } });
     } else {
-      this.pendingToolResponses.push(response);
+      this.pendingToolResponses.push(...responses);
     }
   }
 
