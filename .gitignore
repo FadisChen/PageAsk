@@ -1,1 +1,6 @@
 graphify-out/cache/
+node_modules/
+dist/
+output/playwright/
+.playwright-cli/
+.playwright-mcp/

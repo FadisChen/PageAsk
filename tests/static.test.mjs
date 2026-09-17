@@ -9,12 +9,14 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 test("manifest uses minimum MV3 permissions and local-only extension code", async () => {
   const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.minimum_chrome_version, "116");
+  assert.equal(manifest.minimum_chrome_version, "120");
   assert.deepEqual(manifest.permissions.sort(), ["activeTab", "contextMenus", "scripting", "sidePanel", "storage"].sort());
+  assert.deepEqual(manifest.optional_permissions.sort(), ["bookmarks", "downloads", "history", "readingList", "tabs"].sort());
   assert.deepEqual(manifest.host_permissions, ["https://generativelanguage.googleapis.com/*"]);
   assert.deepEqual(manifest.optional_host_permissions.sort(), ["http://*/*", "https://*/*"].sort());
   assert.equal("options_page" in manifest, false);
   assert.equal("content_scripts" in manifest, false);
+  assert.equal(manifest.web_accessible_resources, undefined);
   assert.doesNotMatch(manifest.content_security_policy.extension_pages, /unsafe-inline|unsafe-eval/);
 });
 
@@ -104,7 +106,7 @@ test("text-only mode starts Live without requesting microphone capture", async (
   const worklet = await readFile(path.join(root, "js", "audio-capture-worklet.js"), "utf8");
   assert.match(html, /id="textOnlyMode"/);
   assert.match(panel, /captureMicrophone: useMicrophone/);
-  assert.match(panel, /文字對談已連線/);
+  assert.doesNotMatch(panel, /elements\.voiceStatus|elements\.voiceHint/);
   assert.match(panel, /muteButton\.classList\.toggle\("is-hidden", textOnly\)/);
   assert.match(panel, /callActions\.classList\.toggle\("is-text-only", textOnly\)/);
   assert.match(audio, /if \(captureMicrophone\) \{/);
@@ -158,6 +160,24 @@ test("grounding feed is collapsed by default and remains user-expandable", async
   assert.match(html, /<summary>/);
 });
 
+test("Avatar stays in the side panel with subtitles over the canvas", async () => {
+  const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
+  const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
+  assert.match(html, /id="avatarCanvas"/);
+  assert.match(html, /id="captionText"/);
+  assert.doesNotMatch(html, /showOverlayButton|closeOverlaysButton|voiceStatus|voiceHint/);
+  assert.doesNotMatch(panel, /syncOverlay|claimSidePanelSession/);
+});
+
+test("browser tools are confirmation-aware and use safe web URLs", async () => {
+  const { BROWSER_TOOL_DECLARATIONS, isMutatingBrowserTool, safeHttpUrl } = await import("../js/browser-tools.js");
+  assert.ok(BROWSER_TOOL_DECLARATIONS.some((tool) => tool.name === "list_open_tabs"));
+  assert.equal(isMutatingBrowserTool("add_bookmark"), true);
+  assert.equal(isMutatingBrowserTool("search_history"), false);
+  assert.equal(safeHttpUrl("javascript:alert(1)"), "");
+  assert.equal(safeHttpUrl("https://example.com/path"), "https://example.com/path");
+});
+
 async function collectJavaScript(directory) {
   const output = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -170,3 +190,12 @@ async function collectJavaScript(directory) {
   }
   return output;
 }
+
+test("side panel element bindings all exist in the HTML", async () => {
+  const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
+  const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
+  const bindings = panel.slice(panel.indexOf("const elements ="), panel.indexOf("let microphonePermissionStatus"));
+  for (const [, id] of bindings.matchAll(/"([A-Za-z]+)"/g)) {
+    assert.ok(html.includes(`id="${id}"`), `Missing element: ${id}`);
+  }
+});

@@ -170,13 +170,15 @@ test("Gemini 3.8 Live setup enables audio, transcripts, VAD, compression, resump
     triggerTokens: 25000,
     slidingWindow: { targetTokens: 8000 },
   });
-  assert.equal(setup.tools[0].functionDeclarations.length, 2);
+  assert.equal(setup.tools[0].functionDeclarations.length, 4);
   assert.deepEqual(
     setup.tools[0].functionDeclarations.map((declaration) => declaration.name),
-    [GROUNDING_FUNCTION_DECLARATION.name, YOUTUBE_FUNCTION_DECLARATION.name],
+    [GROUNDING_FUNCTION_DECLARATION.name, YOUTUBE_FUNCTION_DECLARATION.name, "set_avatar_emotion", "play_avatar_gesture"],
   );
   assert.equal(setup.tools[0].functionDeclarations[0].behavior, "NON_BLOCKING");
   assert.equal(setup.tools[0].functionDeclarations[1].behavior, "NON_BLOCKING");
+  assert.equal(setup.tools[0].functionDeclarations[2].behavior, "NON_BLOCKING");
+  assert.equal(setup.tools[0].functionDeclarations[3].behavior, "NON_BLOCKING");
   assert.equal("thinkingConfig" in setup.generationConfig, false);
 });
 
@@ -489,4 +491,36 @@ test("incomplete response detection ignores short answers and accepts terminal p
     appearsIncomplete("這是一段長度足夠，但最後停在句子中間，還有後續內容沒有說完的回答內容"),
     true,
   );
+});
+
+test("Live hides streamed tool response metadata but preserves spoken text", () => {
+  const received = [];
+  const session = new LiveSession({ apiKey: "test" }, { onModelTranscript: text => received.push(text) });
+  for (const text of ["res", "ponse:set_avatar_", "emotion{result:已更新 Avatar表情。", ",scheduling:SILENT}台灣的歷史", "真的很有趣喔！"]) {
+    session.handleMessage({ serverContent: { outputTranscription: { text } } });
+  }
+  assert.deepEqual(received, ["台灣的歷史", "台灣的歷史真的很有趣喔！"]);
+});
+
+test("Avatar tools animate without publishing tool feed events", () => {
+  const events = [], emotions = [], gestures = [];
+  const session = new LiveSession({ apiKey: "test" }, {
+    onTool: event => events.push(event), onEmotion: value => emotions.push(value), onGesture: value => gestures.push(value),
+  });
+  session.queueToolResponse = () => {};
+  session.handleAvatarEmotionCall({ id: "emotion", name: "set_avatar_emotion", args: { emotion: "happy" } });
+  session.handleAvatarGestureCall({ id: "gesture", name: "play_avatar_gesture", args: { gesture: "nod" } });
+  assert.equal(emotions.length, 1);
+  assert.equal(gestures.length, 1);
+  assert.deepEqual(events, []);
+});
+
+test("tool transcript filtering preserves normal response wording at turn completion", () => {
+  const received = [];
+  const session = new LiveSession({ apiKey: "test" }, { onModelTranscript: text => received.push(text) });
+  session.handleMessage({ serverContent: { outputTranscription: { text: "This is my response" } } });
+  session.finishPendingTurn();
+  assert.equal(received.at(-1), "This is my response");
+  session.handleMessage({ serverContent: { outputTranscription: { text: 'response:search{result:{text:"a } brace"},scheduling:SILENT}Found it.' } } });
+  assert.equal(received.at(-1), "Found it.");
 });

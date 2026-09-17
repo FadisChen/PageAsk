@@ -45,6 +45,7 @@ export function cleanSettings(value) {
       MAX_MEMORY_BUDGET_TOKENS,
       DEFAULT_SETTINGS.companionMemoryBudgetTokens,
     ),
+    browserToolsEnabled: settings.browserToolsEnabled === true,
   };
 }
 
@@ -181,13 +182,20 @@ function cleanTranscriptLine(value) {
 function capTranscript(lines, limit) {
   let used = 0;
   const kept = [];
+  let truncated = false;
   for (const line of lines) {
-    if (used + line.text.length > limit) break;
+    if (used + line.text.length > limit) {
+      truncated = true;
+      break;
+    }
     kept.push(line);
     used += line.text.length;
   }
-  if (!kept.length && lines.length) kept.push({ role: lines[0].role, text: lines[0].text.slice(0, limit) });
-  return { transcript: kept, truncated: kept.length < lines.length };
+  if (!kept.length && lines.length) {
+    kept.push({ role: lines[0].role, text: lines[0].text.slice(0, limit) });
+    truncated = lines[0].text.length > limit;
+  }
+  return { transcript: kept, truncated: truncated || kept.length < lines.length };
 }
 
 export function estimateStorageBytes(value) {

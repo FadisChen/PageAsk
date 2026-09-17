@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "minimum_chrome_version": "116",
+  "minimum_chrome_version": "120",
   "name": "PageAsk",
   "version": "1.0.0",
   "description": "用 Gemini Live 閱讀網頁與檔案，或直接進行具長期記憶的陪伴對談。",
@@ -10,6 +10,13 @@
     "activeTab",
     "scripting",
     "contextMenus"
+  ],
+  "optional_permissions": [
+    "tabs",
+    "history",
+    "bookmarks",
+    "readingList",
+    "downloads"
   ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*"

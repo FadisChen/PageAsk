@@ -1,16 +1,21 @@
 export class BrowserAudioEngine {
-  constructor({ onAudioChunk, onLevel } = {}) {
+  constructor({ onAudioChunk, onLevel, onOutputStarted, onOutputDrained } = {}) {
     this.onAudioChunk = onAudioChunk;
     this.onLevel = onLevel;
+    this.onOutputStarted = onOutputStarted;
+    this.onOutputDrained = onOutputDrained;
     this.context = null;
     this.stream = null;
     this.source = null;
     this.processor = null;
     this.silentGain = null;
+    this.outputGain = null;
+    this.analyser = null;
     this.activeSources = new Set();
     this.nextPlayTime = 0;
     this.running = false;
     this.muted = false;
+    this.startGeneration = 0;
   }
 
   async start({ captureMicrophone = true } = {}) {
@@ -19,10 +24,23 @@ export class BrowserAudioEngine {
     const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
     if (!AudioContextClass) throw new Error("此瀏覽器不支援 Web Audio API。");
 
-    this.context = new AudioContextClass({ latencyHint: "interactive" });
-    await this.context.resume();
+    const generation = ++this.startGeneration;
+    const context = new AudioContextClass({ latencyHint: "interactive" });
+    this.context = context;
+    const assertCurrent = () => {
+      if (generation !== this.startGeneration) throw new DOMException("Audio start cancelled", "AbortError");
+    };
+    await context.resume();
+    assertCurrent();
+    this.outputGain = this.context.createGain();
+    this.outputGain.gain.value = 0.92;
+    this.analyser = this.context.createAnalyser();
+    this.analyser.fftSize = 1024;
+    this.analyser.smoothingTimeConstant = 0.55;
+    this.outputGain.connect(this.analyser);
+    this.analyser.connect(this.context.destination);
     if (captureMicrophone) {
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
           echoCancellation: true,
@@ -31,8 +49,14 @@ export class BrowserAudioEngine {
         },
         video: false,
       });
+      if (generation !== this.startGeneration) {
+        stream.getTracks().forEach((track) => track.stop());
+        assertCurrent();
+      }
+      this.stream = stream;
       this.source = this.context.createMediaStreamSource(this.stream);
       await this.context.audioWorklet.addModule(new URL("./audio-capture-worklet.js", import.meta.url));
+      assertCurrent();
       this.processor = new AudioWorkletNode(this.context, "pageask-audio-capture", {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -79,12 +103,16 @@ export class BrowserAudioEngine {
 
     const source = this.context.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.context.destination);
+    source.connect(this.outputGain || this.context.destination);
     const startAt = Math.max(this.context.currentTime + 0.015, this.nextPlayTime);
     source.start(startAt);
     this.nextPlayTime = startAt + buffer.duration;
     this.activeSources.add(source);
-    source.onended = () => this.activeSources.delete(source);
+    this.onOutputStarted?.();
+    source.onended = () => {
+      this.activeSources.delete(source);
+      if (!this.activeSources.size) this.onOutputDrained?.();
+    };
   }
 
   flushPlayback() {
@@ -96,6 +124,7 @@ export class BrowserAudioEngine {
   }
 
   async stop() {
+    ++this.startGeneration;
     this.running = false;
     this.flushPlayback();
     if (this.processor) {
@@ -104,6 +133,8 @@ export class BrowserAudioEngine {
     }
     try { this.source?.disconnect(); } catch { /* Already disconnected. */ }
     try { this.silentGain?.disconnect(); } catch { /* Already disconnected. */ }
+    try { this.outputGain?.disconnect(); } catch { /* Already disconnected. */ }
+    try { this.analyser?.disconnect(); } catch { /* Already disconnected. */ }
     this.stream?.getTracks().forEach((track) => track.stop());
     const context = this.context;
     this.context = null;
@@ -111,9 +142,17 @@ export class BrowserAudioEngine {
     this.source = null;
     this.processor = null;
     this.silentGain = null;
+    this.outputGain = null;
+    this.analyser = null;
     this.onLevel?.(0);
     if (context && context.state !== "closed") await context.close();
   }
+
+  isPlaying() {
+    return Boolean(this.context && this.activeSources.size && this.nextPlayTime > this.context.currentTime + 0.018);
+  }
+
+  getAnalyser() { return this.analyser; }
 }
 
 export function resample(input, fromRate, toRate) {

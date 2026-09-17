@@ -24,7 +24,7 @@ export function addHistoryEntry(history, entry, { maxEntries = MAX_HISTORY_ENTRI
   let next = [...current, entry];
   let evictedCount = 0;
   while (next.length > maxEntries || estimateStorageBytes(next) > maxTotalBytes) {
-    const oldestUnpinnedIndex = findOldestUnpinnedIndex(next);
+    const oldestUnpinnedIndex = findOldestUnpinnedIndex(next, next.length - 1);
     if (oldestUnpinnedIndex === -1) {
       return {
         history: next,
@@ -38,10 +38,11 @@ export function addHistoryEntry(history, entry, { maxEntries = MAX_HISTORY_ENTRI
   return { history: next, evictedCount, warning: "" };
 }
 
-function findOldestUnpinnedIndex(history) {
+function findOldestUnpinnedIndex(history, protectedIndex = -1) {
   let index = -1;
   let oldest = Infinity;
   history.forEach((entry, i) => {
+    if (i === protectedIndex) return;
     if (entry.pinned) return;
     if (entry.endedAt < oldest) {
       oldest = entry.endedAt;

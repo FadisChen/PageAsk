@@ -23,7 +23,11 @@ export const SOURCE_KEY = "activeSource";
 export const MEMORIES_KEY = "pageAskMemories";
 export const HISTORY_KEY = "pageAskHistory";
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+// Keep a generous character guard for unusually token-efficient text, but use
+// the token limit below as the actual Live source budget.
 export const MAX_SOURCE_CHARS = 60000;
+export const SOURCE_TOKEN_WARNING_TOKENS = 16000;
+export const MAX_SOURCE_TOKENS = 20000;
 export const MAX_COMPANION_PROMPT_CHARS = 12000;
 export const MAX_MEMORY_CHARS = 4000;
 export const MAX_MEMORY_BUDGET_TOKENS = 12000;
@@ -43,6 +47,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   companionSystemPrompt: DEFAULT_COMPANION_SYSTEM_PROMPT,
   companionMemoryEnabled: true,
   companionMemoryBudgetTokens: 3000,
+  browserToolsEnabled: false,
 });
 
 export const VOICES = Object.freeze([
@@ -58,4 +63,8 @@ export const MESSAGE_TYPES = Object.freeze({
   BLOCK_PICKED: "BLOCK_PICKED",
   BLOCK_PICK_CANCELLED: "BLOCK_PICK_CANCELLED",
   SOURCE_UPDATED: "SOURCE_UPDATED",
+  OPEN_SIDE_PANEL: "PAGEASK_OPEN_SIDE_PANEL",
+  EXECUTE_BROWSER_TOOL: "EXECUTE_BROWSER_TOOL",
+  REQUEST_BROWSER_PERMISSIONS: "REQUEST_BROWSER_PERMISSIONS",
+  REQUEST_PAGE_ACCESS: "REQUEST_PAGE_ACCESS",
 });

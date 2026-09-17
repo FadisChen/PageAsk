@@ -1,9 +1,21 @@
 import { BrowserAudioEngine } from "./js/audio.js";
+import { AvatarStateMachine } from "./js/avatar/state-machine.js";
+import { LipSyncAnalyzer } from "./js/avatar/lip-sync.js";
+import { VrmAvatarController } from "./js/avatar/vrm-avatar-controller.js";
+import {
+  BROWSER_TOOL_DECLARATIONS,
+  BROWSER_TOOL_ORIGINS,
+  BROWSER_TOOL_PERMISSIONS,
+  BROWSER_TOOL_SYSTEM_INSTRUCTION,
+  PAGE_ACCESS_PERMISSIONS,
+  isMutatingBrowserTool,
+} from "./js/browser-tools.js";
 import {
   DEFAULT_COMPANION_SYSTEM_PROMPT,
   DEFAULT_LIVE_MODEL,
   MESSAGE_TYPES,
   SOURCE_KEY,
+  SOURCE_TOKEN_WARNING_TOKENS,
   VOICES,
 } from "./js/constants.js";
 import { parseSourceFile } from "./js/file-parser.js";
@@ -24,7 +36,7 @@ import {
   matchesHistorySearch,
 } from "./js/history.js";
 import { fitMemoriesToBudget, processCompanionMemory } from "./js/memory.js";
-import { createActiveSource } from "./js/source.js";
+import { createActiveSource, estimateSourceTokens } from "./js/source.js";
 import {
   createMemory,
   clearSource,
@@ -40,8 +52,6 @@ import {
   updateMemory,
 } from "./js/storage.js";
 import { mergePartial } from "./js/transcript.js";
-
-const OPTIONAL_PAGE_ORIGINS = ["http://*/*", "https://*/*"];
 
 if (globalThis.pdfjsLib?.GlobalWorkerOptions) {
   globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worker.min.js");
@@ -100,9 +110,12 @@ const elements = Object.fromEntries([
   "settingsButton", "historyButton", "readingModeButton", "companionModeButton",
   "sourceSection", "sourceState", "sourceCard", "sourceKind", "sourceTitle", "sourcePreview",
   "sourceLink", "sourceWarning", "pickBlockButton", "uploadButton", "fileInput",
-  "conversationHeading", "connectionPill", "connectionText", "voiceStage", "voiceStatus", "voiceHint", "levelBar",
+  "conversationHeading", "connectionPill", "connectionText", "voiceStage", "levelBar", "avatarCanvas", "avatarFallback",
+  "enableBrowserToolsButton",
+  "sourceDetailsButton", "sourceSummaryTitle", "sourceDialog", "sourceCloseButton",
+  "captionText", "transcriptButton", "transcriptDialog", "transcriptCloseButton", "latestTranscriptButton",
   "callActions", "startButton", "muteButton", "endButton", "transcript", "transcriptEmpty",
-  "toolFeed", "toolFeedState", "toolItems", "composer", "textInput", "sendButton", "toastRegion",
+  "toolFeed", "toolFeedState", "toolItems", "toolConfirmation", "confirmationCount", "confirmationItems", "composer", "textInput", "sendButton", "toastRegion",
   "microphoneNotice", "microphonePermissionTitle", "microphonePermissionText", "openMicrophoneSettingsButton",
   "textOnlyMode",
   "settingsDialog", "panelSettingsForm", "settingsCloseButton", "settingsCancelButton",
@@ -116,6 +129,12 @@ const elements = Object.fromEntries([
 
 let microphonePermissionStatus = null;
 let transcriptRenderPending = false;
+let followTranscript = true;
+let avatarController = null;
+let lipSync = null;
+let avatarFrameTime = performance.now();
+const avatarStateMachine = new AvatarStateMachine();
+const pendingConfirmations = new Map();
 
 const state = {
   settings: await loadSettings(),
@@ -135,11 +154,14 @@ const state = {
   status: "ready",
   transcript: new TranscriptCollector(),
   tools: new Map(),
+  browserToolsGranted: false,
   historyQuery: "",
   sessionStartedAt: null,
 };
 
 renderAll();
+void initializeAvatar();
+void refreshBrowserToolPermission();
 
 for (const voice of VOICES) {
   const option = document.createElement("option");
@@ -193,6 +215,28 @@ elements.textOnlyMode.addEventListener("change", () => {
   renderMicrophonePermission(microphonePermissionStatus?.state || "unknown");
   renderControls();
 });
+elements.sourceDetailsButton.addEventListener("click", () => elements.sourceDialog.showModal());
+elements.sourceCloseButton.addEventListener("click", () => elements.sourceDialog.close());
+elements.transcriptButton.addEventListener("click", () => {
+  elements.transcriptDialog.showModal();
+  renderTranscript();
+});
+elements.transcriptCloseButton.addEventListener("click", () => elements.transcriptDialog.close());
+elements.latestTranscriptButton.addEventListener("click", () => {
+  followTranscript = true;
+  elements.transcript.scrollTop = elements.transcript.scrollHeight;
+  elements.latestTranscriptButton.classList.add("is-hidden");
+});
+elements.transcript.addEventListener("scroll", () => {
+  if (!elements.transcriptDialog.open) return;
+  followTranscript = elements.transcript.scrollHeight - elements.transcript.clientHeight - elements.transcript.scrollTop < 32;
+  elements.latestTranscriptButton.classList.toggle("is-hidden", followTranscript);
+});
+for (const dialog of [elements.sourceDialog, elements.transcriptDialog]) {
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+}
+elements.enableBrowserToolsButton.addEventListener("click", enableBrowserTools);
+elements.confirmationItems.addEventListener("click", handleConfirmationClick);
 
 void monitorMicrophonePermission();
 
@@ -206,6 +250,7 @@ chrome.runtime.onMessage.addListener((message) => {
     toast("已取消選取。 ");
   }
 });
+
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "session" && SOURCE_KEY in changes && !state.started) {
@@ -234,21 +279,75 @@ window.addEventListener("beforeunload", () => {
 
 async function clearTemporaryContent() {
   state.transcript = new TranscriptCollector();
+  followTranscript = true;
   state.source = null;
   await clearSource();
+}
+
+async function initializeAvatar() {
+  try {
+    avatarController = new VrmAvatarController(elements.avatarCanvas, {
+      onLoading: (progress) => { elements.avatarFallback.classList.remove("is-hidden"); elements.avatarFallback.querySelector("span:last-child").textContent = `Avatar ${Math.round(progress * 100)}%`; },
+      onReady: () => elements.avatarFallback.classList.add("is-hidden"),
+      onError: (error) => { elements.avatarFallback.classList.remove("is-hidden"); elements.avatarFallback.querySelector("span:last-child").textContent = "Avatar 無法載入"; console.warn("PageAsk Avatar:", error.message); },
+    });
+    await avatarController.load(chrome.runtime.getURL("avatars/sha.vrm"));
+  } catch (error) {
+    elements.avatarFallback.querySelector("span:last-child").textContent = "語音模式";
+    console.warn("PageAsk Avatar 初始化失敗：", error.message);
+  }
+  requestAnimationFrame(updateAvatarFrame);
+}
+
+function updateAvatarFrame(now) {
+  const delta = Math.min(0.1, Math.max(0, (now - avatarFrameTime) / 1000));
+  avatarFrameTime = now;
+  if (document.visibilityState === "visible" && avatarController) {
+    const playing = Boolean(state.audio?.isPlaying());
+    const mouth = lipSync?.update(playing);
+    if (mouth) avatarController.setViseme(mouth.viseme, mouth.weight, mouth.rms);
+    avatarController.setState(avatarStateMachine.state);
+    avatarController.update(delta, playing);
+  }
+  requestAnimationFrame(updateAvatarFrame);
+}
+
+async function refreshBrowserToolPermission() {
+  try {
+    state.browserToolsGranted = await chrome.permissions.contains({ permissions: BROWSER_TOOL_PERMISSIONS });
+  } catch {
+    state.browserToolsGranted = false;
+  }
+  renderSurface();
+  return state.browserToolsGranted;
+}
+
+async function enableBrowserTools() {
+  if (state.browserToolsGranted) return toast("瀏覽器工具已啟用。 ");
+  setBusy(elements.enableBrowserToolsButton, true, "等待權限…");
+  try {
+    const granted = await chrome.permissions.request({ permissions: BROWSER_TOOL_PERMISSIONS });
+    if (!granted) return toast("未取得瀏覽器工具權限。", true);
+    state.settings = await saveSettings({ ...state.settings, browserToolsEnabled: true });
+    state.browserToolsGranted = true;
+    toast("瀏覽器工具已啟用；下一場對談即可使用。 ");
+  } catch (error) {
+    toast(`權限設定失敗：${error.message}`, true);
+  } finally {
+    setBusy(elements.enableBrowserToolsButton, false);
+    renderSurface();
+  }
 }
 
 async function startBlockPicker() {
   if (state.started) return;
   setBusy(elements.pickBlockButton, true, "等待選取…");
   try {
+    const pageAccessGranted = await chrome.permissions.request({ permissions: PAGE_ACCESS_PERMISSIONS, origins: BROWSER_TOOL_ORIGINS });
+    if (!pageAccessGranted) throw new Error("需要網頁內容存取權限才能選取區塊。");
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.url && !/^https?:\/\//i.test(tab.url)) {
       throw new Error("這個 Chrome 內建頁面不允許選取內容，請改用一般網頁。");
-    }
-    if (!tab?.url) {
-      const granted = await chrome.permissions.request({ origins: OPTIONAL_PAGE_ORIGINS });
-      if (!granted) throw new Error("需要網頁內容存取權限才能選取區塊。");
     }
     const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.START_BLOCK_PICKER });
     if (!response?.ok) throw new Error(response?.error || "無法啟動網頁選取。");
@@ -272,7 +371,11 @@ async function handleFileUpload(event) {
     state.source = source;
     renderSource();
     renderControls();
-    toast(source.truncated ? "檔案已載入，超出部分已截斷。" : "檔案已載入。 ");
+    toast(source.truncated
+      ? "檔案已載入，超出 Live 來源上限的部分已截斷。"
+      : source.tokenWarning
+        ? "檔案已載入，來源較長，可能增加 Live 對談延遲。"
+        : "檔案已載入。 ");
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -283,6 +386,7 @@ async function handleFileUpload(event) {
 async function startSession() {
   if (state.started || state.ending || state.memoryProcessing) return;
   state.settings = await loadSettings();
+  await refreshBrowserToolPermission();
   if (!state.settings.apiKey) {
     toast("請先輸入 Gemini API key。", true);
     await openSettings();
@@ -327,19 +431,25 @@ async function startSession() {
       promptMemories.memories.map((memory) => memory.content),
     )
     : buildSystemInstruction(state.source);
+  const workspaceInstruction = state.browserToolsGranted ? BROWSER_TOOL_SYSTEM_INSTRUCTION : "";
 
   try {
     state.audio = new BrowserAudioEngine({
       onAudioChunk: (bytes) => state.session?.sendAudio(bytes),
       onLevel: (level) => { elements.levelBar.style.width = `${Math.round(level * 100)}%`; },
+      onOutputStarted: () => { avatarStateMachine.toSpeaking(); avatarController?.finishTurn(); },
+      onOutputDrained: () => { lipSync?.reset(); avatarController?.resetAnimation(); if (state.started) avatarStateMachine.toListening(); },
     });
     await state.audio.start({ captureMicrophone: useMicrophone });
+    lipSync = new LipSyncAnalyzer(state.audio.getAnalyser());
     if (useMicrophone) renderMicrophonePermission("granted");
     state.session = new LiveSession({
       apiKey: state.settings.apiKey,
       liveModel: DEFAULT_LIVE_MODEL,
       voiceName: state.settings.voiceName,
-      systemInstruction,
+      systemInstruction: `${systemInstruction}${workspaceInstruction}`,
+      additionalToolDeclarations: state.browserToolsGranted ? BROWSER_TOOL_DECLARATIONS : [],
+      toolHandlers: state.browserToolsGranted ? createBrowserToolHandlers() : {},
       autoContinueIncompleteText: !useMicrophone,
     }, {
       onStatus: setStatus,
@@ -350,6 +460,13 @@ async function startSession() {
       onTurnComplete: () => { state.transcript.onTurnComplete(); scheduleTranscriptRender(); },
       onGrounding: handleGroundingEvent,
       onYoutubeAnalysis: handleYoutubeAnalysisEvent,
+      onEmotion: (emotion) => {
+        avatarController?.setEmotion(emotion);
+      },
+      onGesture: (gesture) => {
+        avatarController?.playGesture(gesture);
+      },
+      onTool: handleToolEvent,
       onError: (error) => {
         toast(friendlyApiError(error), true);
         void endSession(false, false);
@@ -549,10 +666,13 @@ async function endSession(showNotice = true, processMemory = true) {
   const shouldProcessMemory = processMemory && completedMode === "companion" && state.activeMemoryEnabled;
   const transcript = state.transcript.snapshot();
 
+  cancelPendingConfirmations();
   state.session?.stop();
   state.session = null;
   await state.audio?.stop();
   state.audio = null;
+  lipSync?.reset();
+  lipSync = null;
   state.started = false;
   state.muted = false;
   state.microphoneActive = false;
@@ -701,15 +821,131 @@ async function openMicrophoneSettings() {
 }
 
 function handleGroundingEvent(event) {
-  state.tools.set(event.id, event);
-  if (state.tools.size > 5) state.tools.delete(state.tools.keys().next().value);
-  renderTools();
+  handleToolEvent({ ...event, name: "ground_with_google_search" });
 }
 
 function handleYoutubeAnalysisEvent(event) {
+  handleToolEvent({ ...event, name: "analyze_youtube_video" });
+}
+
+function handleToolEvent(event) {
+  if (!event?.id) return;
   state.tools.set(event.id, event);
-  if (state.tools.size > 5) state.tools.delete(state.tools.keys().next().value);
+  while (state.tools.size > 8) state.tools.delete(state.tools.keys().next().value);
   renderTools();
+}
+
+function createBrowserToolHandlers() {
+  return Object.fromEntries(BROWSER_TOOL_DECLARATIONS.map((tool) => [
+    tool.name,
+    ({ call, signal }) => runBrowserTool(call, signal),
+  ]));
+}
+
+async function runBrowserTool(call, signal) {
+  if (isMutatingBrowserTool(call.name)) {
+    const allowed = await waitForConfirmation(call, signal);
+    if (!allowed) return { response: { result: "使用者拒絕或取消了這項操作。" }, scheduling: "SILENT" };
+  }
+  if (signal.aborted) return { response: { result: "工具已取消。" }, scheduling: "SILENT" };
+  const response = await chrome.runtime.sendMessage({
+    type: MESSAGE_TYPES.EXECUTE_BROWSER_TOOL,
+    name: call.name,
+    args: call.args || {},
+  });
+  if (!response?.ok) throw new Error(response?.error || "瀏覽器工具執行失敗。");
+  return { response: response.result || { result: "操作完成。" }, scheduling: "WHEN_IDLE" };
+}
+
+function waitForConfirmation(call, signal) {
+  return new Promise((resolve) => {
+    const request = { call, resolve };
+    pendingConfirmations.set(call.id, request);
+    renderConfirmations();
+    const abort = () => {
+      if (!pendingConfirmations.has(call.id)) return;
+      pendingConfirmations.delete(call.id);
+      resolve(false);
+      renderConfirmations();
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    request.cleanup = () => signal?.removeEventListener("abort", abort);
+  });
+}
+
+function handleConfirmationClick(event) {
+  const button = event.target.closest("button[data-confirm-action]");
+  if (!button) return;
+  const request = pendingConfirmations.get(button.dataset.confirmId);
+  if (!request) return;
+  pendingConfirmations.delete(button.dataset.confirmId);
+  request.cleanup?.();
+  request.resolve(button.dataset.confirmAction === "allow");
+  renderConfirmations();
+}
+
+function cancelPendingConfirmations() {
+  for (const request of pendingConfirmations.values()) {
+    request.cleanup?.();
+    request.resolve(false);
+  }
+  pendingConfirmations.clear();
+  renderConfirmations();
+}
+
+function renderConfirmations() {
+  const requests = [...pendingConfirmations.values()];
+  if (requests.length && elements.toolConfirmation.classList.contains("is-hidden")) {
+    for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+  }
+  elements.toolConfirmation.classList.toggle("is-hidden", requests.length === 0);
+  elements.confirmationCount.textContent = `${requests.length} 項`;
+  elements.confirmationItems.replaceChildren();
+  for (const { call } of requests) {
+    const item = document.createElement("article");
+    item.className = "confirmation-item";
+    const title = document.createElement("strong");
+    title.textContent = confirmationTitle(call.name);
+    const detail = document.createElement("p");
+    detail.textContent = confirmationDetail(call);
+    const actions = document.createElement("div");
+    actions.className = "confirmation-actions";
+    actions.append(
+      confirmationButton("allow", "確認執行", call.id, "button button-primary button-small"),
+      confirmationButton("deny", "取消", call.id, "button button-secondary button-small"),
+    );
+    item.append(title, detail, actions);
+    elements.confirmationItems.appendChild(item);
+  }
+}
+
+function confirmationButton(action, label, id, className) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.dataset.confirmAction = action;
+  button.dataset.confirmId = id;
+  button.textContent = label;
+  return button;
+}
+
+function confirmationTitle(name) {
+  return ({
+    activate_tab: "切換瀏覽器分頁",
+    add_bookmark: "新增書籤",
+    add_to_reading_list: "加入 Reading List",
+    download_file: "開始下載檔案",
+    navigate_tab: "導覽分頁到新網址",
+    close_tab: "關閉瀏覽器分頁",
+  })[name] || "確認瀏覽器操作";
+}
+
+function confirmationDetail(call) {
+  const args = call.args || {};
+  const values = Object.entries(args)
+    .filter(([key]) => ["url", "title", "filename", "tab_id", "parent_id"].includes(key))
+    .map(([key, value]) => `${key}：${String(value)}`);
+  return values.join("\n") || "PageAsk 想執行一項瀏覽器操作。";
 }
 
 function renderMemoryList() {
@@ -941,11 +1177,21 @@ function renderAll() {
   renderControls();
   renderTranscript();
   renderTools();
+  renderSurface();
+  renderConfirmations();
   renderStatus();
+}
+
+function renderSurface() {
+  elements.enableBrowserToolsButton.textContent = state.browserToolsGranted ? "瀏覽器工具已啟用" : "啟用瀏覽器工具";
+  elements.enableBrowserToolsButton.disabled = state.browserToolsGranted || state.started || state.memoryProcessing;
 }
 
 function renderSource() {
   const source = state.source;
+  elements.sourceDetailsButton.disabled = !source;
+  elements.sourceSummaryTitle.textContent = source ? source.title : "加入一份閱讀來源";
+  elements.sourceDetailsButton.title = source ? `${source.title} — 查看來源` : "選取網頁區塊或上傳檔案";
   elements.sourceCard.classList.toggle("is-empty", !source);
   if (!source) {
     elements.sourceState.textContent = "尚未加入";
@@ -957,7 +1203,14 @@ function renderSource() {
     return;
   }
   const kindLabels = { "web-selection": "網頁反白", "web-block": "網頁區塊", file: "本機檔案" };
-  elements.sourceState.textContent = `${source.retainedChars.toLocaleString()} 字`;
+  const retainedTokens = Number.isFinite(source.retainedTokens)
+    ? source.retainedTokens
+    : estimateSourceTokens(source.text);
+  const originalTokens = Number.isFinite(source.originalTokens)
+    ? source.originalTokens
+    : estimateSourceTokens(source.text);
+  const tokenWarning = source.tokenWarning || retainedTokens >= SOURCE_TOKEN_WARNING_TOKENS;
+  elements.sourceState.textContent = `${source.retainedChars.toLocaleString()} 字 · 約 ${retainedTokens.toLocaleString()} tokens${source.truncated ? " · 已截斷" : ""}`;
   elements.sourceKind.textContent = kindLabels[source.kind] || "參考來源";
   elements.sourceTitle.textContent = source.title;
   elements.sourcePreview.textContent = excerpt(source.text, 220);
@@ -968,8 +1221,10 @@ function renderSource() {
     elements.sourceLink.removeAttribute("href");
     elements.sourceLink.classList.add("is-hidden");
   }
-  if (source.truncated) {
-    elements.sourceWarning.textContent = `原始內容共 ${source.originalChars.toLocaleString()} 字，已保留前 ${source.retainedChars.toLocaleString()} 字。`;
+  if (source.truncated || tokenWarning) {
+    elements.sourceWarning.textContent = source.truncated
+      ? `原始內容約 ${originalTokens.toLocaleString()} tokens，已保留前 ${retainedTokens.toLocaleString()} tokens（${source.retainedChars.toLocaleString()} 字）。`
+      : `來源約 ${retainedTokens.toLocaleString()} tokens，已接近 Live 對談建議上限。`;
     elements.sourceWarning.classList.remove("is-hidden");
   } else {
     elements.sourceWarning.classList.add("is-hidden");
@@ -995,26 +1250,6 @@ function renderControls() {
 }
 
 function renderStatus() {
-  const companion = (state.activeMode || state.settings.conversationMode) === "companion";
-  const readyHint = companion
-    ? (state.settings.companionMemoryEnabled ? "不用準備來源，小書僮會帶著你們的長期記憶來陪你" : "不用準備來源，隨時可以直接聊聊")
-    : (state.source ? "可以開始針對目前來源對談" : "加入內容後即可開始語音或文字對談");
-  const statusCopy = {
-    ready: ["準備好了", readyHint],
-    permission: ["等待麥克風授權", "請在 Chrome 提示中允許 PageAsk 使用麥克風"],
-    connecting: ["正在連線", "正在建立 Gemini Live 工作階段"],
-    reconnecting: ["正在重新連線", "保留目前工作階段，請稍候"],
-    listening: !state.microphoneActive
-      ? ["文字對談已連線", "輸入訊息後按 Enter 送出"]
-      : [state.muted ? "麥克風已靜音" : "正在聽你說", state.muted ? "可用文字繼續提問" : "你可以自然說話，隨時插話"],
-    speaking: ["小書僮 正在回答", "開口即可打斷目前回應"],
-    failed: ["連線失敗", "請檢查設定、網路與免費配額"],
-    "processing-memory": ["正在整理記憶", "從這次對話挑出值得長期記住的事"],
-    stopped: ["對談已結束", companion ? "隨時可以再開始一場陪伴對談" : "可以保留來源再開始一場新對談"],
-  };
-  const [title, hint] = statusCopy[state.status] || statusCopy.ready;
-  elements.voiceStatus.textContent = title;
-  elements.voiceHint.textContent = hint;
   elements.connectionText.textContent = connectionLabel(state.status);
   elements.connectionPill.className = `connection-pill ${state.status === "listening" ? "is-live" : state.status === "speaking" ? "is-speaking" : state.status === "failed" ? "is-error" : ""}`;
   elements.voiceStage.className = `voice-stage ${state.status === "listening" ? "is-listening" : state.status === "speaking" ? "is-speaking" : ""}`;
@@ -1022,6 +1257,13 @@ function renderStatus() {
 
 function renderTranscript() {
   const lines = state.transcript.preview();
+  const latest = lines.at(-1);
+  const caption = latest?.text || "";
+  if (elements.captionText.textContent !== caption) {
+    elements.captionText.textContent = caption;
+    elements.captionText.scrollTop = elements.captionText.scrollHeight;
+  }
+  if (!elements.transcriptDialog.open) return;
   if (!lines.length) {
     if (elements.transcriptEmpty.parentElement !== elements.transcript) {
       while (elements.transcript.firstChild) elements.transcript.firstChild.remove();
@@ -1051,7 +1293,8 @@ function renderTranscript() {
     if (text.textContent !== line.text) text.textContent = line.text;
   }
   while (elements.transcript.children.length > lines.length) elements.transcript.lastElementChild.remove();
-  elements.transcript.scrollTop = elements.transcript.scrollHeight;
+  if (followTranscript) elements.transcript.scrollTop = elements.transcript.scrollHeight;
+  elements.latestTranscriptButton.classList.toggle("is-hidden", followTranscript);
 }
 
 function scheduleTranscriptRender() {
@@ -1065,13 +1308,55 @@ function scheduleTranscriptRender() {
 
 function renderTools() {
   const events = [...state.tools.values()];
+  elements.transcriptButton.textContent = events.length ? `逐字稿 · ${events.length} 項工具結果 ↗` : "逐字稿 ↗";
   elements.toolFeed.classList.toggle("is-hidden", events.length === 0);
   const loading = events.some((event) => event.status === "loading");
   elements.toolFeedState.textContent = loading ? "查詢中…" : `${events.length} 項結果`;
   elements.toolItems.replaceChildren();
   for (const event of events) {
-    elements.toolItems.appendChild("url" in event ? renderYoutubeToolItem(event) : renderGroundingToolItem(event));
+    const item = event.name === "analyze_youtube_video"
+      ? renderYoutubeToolItem(event)
+      : event.name === "ground_with_google_search"
+        ? renderGroundingToolItem(event)
+        : renderBrowserToolItem(event);
+    elements.toolItems.appendChild(item);
   }
+}
+
+function renderBrowserToolItem(event) {
+  const item = document.createElement("div");
+  item.className = "tool-item";
+  const title = document.createElement("strong");
+  title.textContent = `${browserToolLabel(event.name)} · ${event.status === "loading" ? "執行中" : event.status === "complete" ? "完成" : "失敗"}`;
+  const detail = document.createElement("span");
+  detail.textContent = event.error || summarizeToolResult(event.result) || "等待工具結果";
+  item.append(title, detail);
+  return item;
+}
+
+function browserToolLabel(name) {
+  return ({
+    list_open_tabs: "分頁清單",
+    activate_tab: "切換分頁",
+    search_history: "搜尋歷史紀錄",
+    search_bookmarks: "搜尋書籤",
+    list_reading_list: "Reading List",
+    add_bookmark: "新增書籤",
+    add_to_reading_list: "加入 Reading List",
+    list_downloads: "下載狀態",
+    download_file: "下載檔案",
+    navigate_tab: "導覽分頁",
+    close_tab: "關閉分頁",
+  })[name] || "瀏覽器工具";
+}
+
+function summarizeToolResult(result) {
+  if (!result) return "";
+  if (typeof result === "string") return excerpt(result, 180);
+  if (typeof result !== "object") return String(result);
+  if (result.result && typeof result.result === "string") return excerpt(result.result, 180);
+  for (const key of ["items", "tabs"]) if (Array.isArray(result[key])) return `回傳 ${result[key].length} 項資料`;
+  return Object.entries(result).slice(0, 3).map(([key, value]) => `${key}：${String(value)}`).join("；");
 }
 
 function renderGroundingToolItem(event) {
@@ -1122,6 +1407,17 @@ function renderYoutubeToolItem(event) {
 
 function setStatus(status) {
   state.status = status;
+  const avatarState = status === "speaking"
+    ? "speaking"
+    : status === "listening"
+      ? "listening"
+      : status === "connecting" || status === "reconnecting" || status === "permission"
+        ? "thinking"
+        : status === "failed"
+          ? "interrupted"
+          : "idle";
+  avatarStateMachine.set(avatarState);
+  avatarController?.setState(avatarState);
   renderStatus();
   renderControls();
 }
