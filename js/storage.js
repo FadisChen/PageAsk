@@ -45,7 +45,6 @@ export function cleanSettings(value) {
       MAX_MEMORY_BUDGET_TOKENS,
       DEFAULT_SETTINGS.companionMemoryBudgetTokens,
     ),
-    browserToolsEnabled: settings.browserToolsEnabled === true,
   };
 }
 
@@ -156,8 +155,6 @@ export function cleanHistoryEntry(value) {
   return {
     id: typeof value.id === "string" && value.id ? value.id : makeId(),
     mode: value.mode === "companion" ? "companion" : "reading",
-    personaId: typeof value.personaId === "string" && value.personaId ? value.personaId : null,
-    personaName: cleanString(value.personaName, "", 120),
     sourceTitles: Array.isArray(value.sourceTitles)
       ? value.sourceTitles.map((title) => cleanString(title, "", 240)).filter(Boolean)
       : [],
@@ -202,12 +199,16 @@ export function estimateStorageBytes(value) {
   return new TextEncoder().encode(JSON.stringify(value)).length;
 }
 
+export function isCjkCharacter(character) {
+  const code = character.codePointAt(0);
+  return (code >= 0x3000 && code <= 0x30ff) || (code >= 0x4e00 && code <= 0x9fff) || (code >= 0xff00 && code <= 0xffef);
+}
+
 export function estimateTokens(text) {
   let cjk = 0;
   let other = 0;
   for (const character of String(text || "")) {
-    const code = character.codePointAt(0);
-    if ((code >= 0x3000 && code <= 0x30ff) || (code >= 0x4e00 && code <= 0x9fff) || (code >= 0xff00 && code <= 0xffef)) cjk += 1;
+    if (isCjkCharacter(character)) cjk += 1;
     else other += 1;
   }
   return cjk + Math.ceil(other / 4);

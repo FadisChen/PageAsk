@@ -6,6 +6,7 @@
   "description": "用 Gemini Live 閱讀網頁與檔案，或直接進行具長期記憶的陪伴對談。",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "sidePanel",
     "activeTab",
     "scripting",

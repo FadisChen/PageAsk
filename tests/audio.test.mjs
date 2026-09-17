@@ -19,6 +19,22 @@ test("audio is downsampled to the expected length", () => {
   assert.ok(Math.abs(output[100] - 0.25) < 1e-6);
 });
 
+test("flushing playback reports output drained exactly once", () => {
+  let drained = 0;
+  const audio = new BrowserAudioEngine({ onOutputDrained: () => { drained += 1; } });
+  const sources = [1, 2, 3].map(() => {
+    const source = { stop() { queueMicrotask(() => this.onended?.()); } };
+    source.onended = () => { audio.activeSources.delete(source); if (!audio.activeSources.size) audio.onOutputDrained?.(); };
+    audio.activeSources.add(source);
+    return source;
+  });
+  audio.flushPlayback();
+  assert.equal(drained, 1);
+  assert.ok(sources.every((source) => source.onended === null));
+  audio.flushPlayback();
+  assert.equal(drained, 1);
+});
+
 test("closing while microphone permission is pending stops the late stream", async () => {
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   const originalContext = globalThis.AudioContext;

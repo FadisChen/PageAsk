@@ -140,8 +140,9 @@ h1, h2, h3, p { margin-top: 0; }
 .source-warning { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #e1b7aa; color: var(--rust); font-size: 11px; }
 
 .source-actions, .call-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-.call-actions { grid-template-columns: 1.25fr 1fr .72fr; }
-.call-actions.is-text-only { grid-template-columns: 1.25fr .72fr; }
+.call-actions { grid-template-columns: 1.1fr 1fr 1fr .66fr; }
+.call-actions.is-text-only { grid-template-columns: 1.25fr 1fr .72fr; }
+#screenShareButton.is-sharing { background: var(--green); color: #fff; }
 
 .button {
   min-height: 40px;

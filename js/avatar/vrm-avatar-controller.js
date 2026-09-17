@@ -97,11 +97,6 @@ export class VrmAvatarController {
 
   setState(state) { this.state = state; }
 
-  setPlacement(side) {
-    if (side !== "left" && side !== "right") return;
-    this.targetYaw = Math.PI + (side === "left" ? PLACEMENT_YAW : -PLACEMENT_YAW);
-  }
-
   setEmotion(emotion) {
     if (!AVATAR_EMOTIONS.includes(emotion) || emotion === this.emotion) return;
     this.emotionFrom = this.emotion;

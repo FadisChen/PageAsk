@@ -76,15 +76,8 @@ async function handleMessage(message, sender) {
   }
 
   if (message?.type === MESSAGE_TYPES.BLOCK_PICK_CANCELLED) {
-    await announce({ type: MESSAGE_TYPES.BLOCK_PICK_CANCELLED });
+    // The content script message already reaches the side panel directly.
     return { status: "picker-cancelled" };
-  }
-
-  if (message?.type === MESSAGE_TYPES.OPEN_SIDE_PANEL) {
-    const tab = await findTargetTab(message.tabId, sender);
-    if (tab?.windowId == null) throw new Error("找不到要開啟 PageAsk 的視窗。");
-    await chrome.sidePanel.open({ windowId: tab.windowId });
-    return { status: "side-panel-opened", tabId: tab.id };
   }
 
   if (message?.type === MESSAGE_TYPES.EXECUTE_BROWSER_TOOL) {
@@ -92,13 +85,6 @@ async function handleMessage(message, sender) {
   }
 
   return { status: "ignored" };
-}
-
-async function findTargetTab(tabId, sender = {}) {
-  if (Number.isInteger(tabId)) return chrome.tabs.get(tabId);
-  if (Number.isInteger(sender.tab?.id)) return chrome.tabs.get(sender.tab.id);
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab || null;
 }
 
 async function executeBrowserTool(name, args) {

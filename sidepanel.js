@@ -32,10 +32,12 @@ import {
   createHistoryEntry,
   deriveHistoryTitle,
   exportHistoryListToMarkdown,
+  excerpt,
   exportHistoryToMarkdown,
   matchesHistorySearch,
 } from "./js/history.js";
 import { fitMemoriesToBudget, processCompanionMemory } from "./js/memory.js";
+import { ScreenShare } from "./js/screen-share.js";
 import { createActiveSource, estimateSourceTokens } from "./js/source.js";
 import {
   createMemory,
@@ -114,7 +116,7 @@ const elements = Object.fromEntries([
   "enableBrowserToolsButton",
   "sourceDetailsButton", "sourceSummaryTitle", "sourceDialog", "sourceCloseButton",
   "captionText", "transcriptButton", "transcriptDialog", "transcriptCloseButton", "latestTranscriptButton",
-  "callActions", "startButton", "muteButton", "endButton", "transcript", "transcriptEmpty",
+  "callActions", "startButton", "muteButton", "screenShareButton", "endButton", "transcript", "transcriptEmpty",
   "toolFeed", "toolFeedState", "toolItems", "toolConfirmation", "confirmationCount", "confirmationItems", "composer", "textInput", "sendButton", "toastRegion",
   "microphoneNotice", "microphonePermissionTitle", "microphonePermissionText", "openMicrophoneSettingsButton",
   "textOnlyMode",
@@ -133,6 +135,8 @@ let followTranscript = true;
 let avatarController = null;
 let lipSync = null;
 let avatarFrameTime = performance.now();
+let avatarPendingDelta = 0;
+const AVATAR_IDLE_FRAME_SECONDS = 1 / 20;
 const avatarStateMachine = new AvatarStateMachine();
 const pendingConfirmations = new Map();
 
@@ -143,6 +147,7 @@ const state = {
   history: await loadHistory(),
   session: null,
   audio: null,
+  screenShare: null,
   started: false,
   ending: false,
   muted: false,
@@ -207,6 +212,7 @@ elements.uploadButton.addEventListener("click", () => elements.fileInput.click()
 elements.fileInput.addEventListener("change", handleFileUpload);
 elements.startButton.addEventListener("click", startSession);
 elements.muteButton.addEventListener("click", toggleMute);
+elements.screenShareButton.addEventListener("click", toggleScreenShare);
 elements.endButton.addEventListener("click", () => endSession());
 elements.composer.addEventListener("submit", sendText);
 elements.textInput.addEventListener("keydown", handleTextInputKeydown);
@@ -260,18 +266,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
-document.addEventListener("visibilitychange", () => {
-  if (
-    document.visibilityState === "hidden" &&
-    !state.started &&
-    !state.ending &&
-    !state.memoryProcessing
-  ) {
-    void clearTemporaryContent();
-  }
-});
-
 window.addEventListener("beforeunload", () => {
+  state.screenShare?.stop();
   state.session?.stop(false);
   void state.audio?.stop();
   void clearTemporaryContent();
@@ -304,10 +300,15 @@ function updateAvatarFrame(now) {
   avatarFrameTime = now;
   if (document.visibilityState === "visible" && avatarController) {
     const playing = Boolean(state.audio?.isPlaying());
-    const mouth = lipSync?.update(playing);
-    if (mouth) avatarController.setViseme(mouth.viseme, mouth.weight, mouth.rms);
-    avatarController.setState(avatarStateMachine.state);
-    avatarController.update(delta, playing);
+    avatarPendingDelta += delta;
+    // Idle panels only need a gentle breathing loop, so render at a lower rate.
+    if (state.started || playing || avatarPendingDelta >= AVATAR_IDLE_FRAME_SECONDS) {
+      const mouth = lipSync?.update(playing);
+      if (mouth) avatarController.setViseme(mouth.viseme, mouth.weight, mouth.rms);
+      avatarController.setState(avatarStateMachine.state);
+      avatarController.update(avatarPendingDelta, playing);
+      avatarPendingDelta = 0;
+    }
   }
   requestAnimationFrame(updateAvatarFrame);
 }
@@ -328,7 +329,6 @@ async function enableBrowserTools() {
   try {
     const granted = await chrome.permissions.request({ permissions: BROWSER_TOOL_PERMISSIONS });
     if (!granted) return toast("未取得瀏覽器工具權限。", true);
-    state.settings = await saveSettings({ ...state.settings, browserToolsEnabled: true });
     state.browserToolsGranted = true;
     toast("瀏覽器工具已啟用；下一場對談即可使用。 ");
   } catch (error) {
@@ -513,7 +513,14 @@ async function setConversationMode(mode) {
   renderAll();
 }
 
+function memoryEditingBlocked() {
+  if (!state.memoryProcessing) return false;
+  toast("小書僮正在整理記憶，請稍候再編輯。", true);
+  return true;
+}
+
 function openNewMemoryEditor() {
+  if (memoryEditingBlocked()) return;
   elements.newMemoryContent.value = "";
   elements.newMemoryLocked.checked = true;
   elements.newMemoryEditor.classList.remove("is-hidden");
@@ -527,6 +534,7 @@ function closeNewMemoryEditor() {
 }
 
 async function saveNewMemory() {
+  if (memoryEditingBlocked()) return;
   const memory = createMemory(elements.newMemoryContent.value, elements.newMemoryLocked.checked);
   if (!memory) return toast("記憶內容不可空白。", true);
   const fitted = await saveMemoriesWithinBudget([...state.memories, memory], undefined, memory.id);
@@ -538,7 +546,7 @@ async function saveNewMemory() {
 
 async function handleMemoryListClick(event) {
   const button = event.target.closest("button[data-memory-action]");
-  if (!button) return;
+  if (!button || memoryEditingBlocked()) return;
   const item = button.closest("[data-memory-id]");
   const memory = state.memories.find((entry) => entry.id === item?.dataset.memoryId);
   if (!memory) return;
@@ -614,8 +622,9 @@ async function testAndSaveSettings() {
       voiceName: next.voiceName,
     });
     state.settings = await saveSettings(next);
-    const fitted = await saveMemoriesWithinBudget(state.memories, state.settings.companionMemoryBudgetTokens);
     showSettingsTestStatus("Live 連線成功，設定已儲存。", false, true);
+    if (state.memoryProcessing) return;
+    const fitted = await saveMemoriesWithinBudget(state.memories, state.settings.companionMemoryBudgetTokens);
     if (fitted.omittedCount || fitted.lockedOverBudget) {
       toast(memoryBudgetNotice(fitted, "記憶已依新預算整理。"), fitted.lockedOverBudget);
     }
@@ -631,8 +640,12 @@ async function submitSettings(event) {
   const next = readSettingsForm();
   if (!next) return;
   state.settings = await saveSettings(next);
-  const fitted = await saveMemoriesWithinBudget(state.memories, state.settings.companionMemoryBudgetTokens);
   closeSettings();
+  if (state.memoryProcessing) {
+    renderAll();
+    return toast("設定已儲存；記憶預算會在本次整理完成後的下次儲存套用。");
+  }
+  const fitted = await saveMemoriesWithinBudget(state.memories, state.settings.companionMemoryBudgetTokens);
   renderAll();
   toast(memoryBudgetNotice(fitted, "設定已儲存。"), fitted.lockedOverBudget);
 }
@@ -667,6 +680,8 @@ async function endSession(showNotice = true, processMemory = true) {
   const transcript = state.transcript.snapshot();
 
   cancelPendingConfirmations();
+  state.screenShare?.stop();
+  state.screenShare = null;
   state.session?.stop();
   state.session = null;
   await state.audio?.stop();
@@ -726,6 +741,7 @@ async function endSession(showNotice = true, processMemory = true) {
     } finally {
       state.transcript = new TranscriptCollector();
       state.memoryProcessing = false;
+      if (elements.settingsDialog.open) renderMemoryList();
     }
   }
 
@@ -746,6 +762,38 @@ function toggleMute() {
   renderControls();
   renderStatus();
   toast(state.muted ? "麥克風已靜音。" : "麥克風已開啟。 ");
+}
+
+async function toggleScreenShare() {
+  if (state.screenShare) {
+    state.screenShare.stop();
+    state.screenShare = null;
+    renderControls();
+    return toast("已停止分享畫面。 ");
+  }
+  if (!state.started || state.ending || !state.session) return;
+  const share = new ScreenShare({
+    onFrame: (bytes) => state.session?.sendVideoFrame(bytes),
+    onEnded: () => {
+      if (state.screenShare !== share) return;
+      state.screenShare = null;
+      renderControls();
+      toast("已停止分享畫面。 ");
+    },
+  });
+  state.screenShare = share;
+  renderControls();
+  try {
+    await share.start();
+    if (state.screenShare !== share) return share.stop();
+    toast("正在分享畫面，小書僮每秒會看到一張截圖。 ");
+  } catch (error) {
+    if (state.screenShare === share) state.screenShare = null;
+    share.stop();
+    toast(error?.name === "NotAllowedError" ? "已取消分享畫面。" : `無法分享畫面：${error.message}`, error?.name !== "NotAllowedError");
+  } finally {
+    renderControls();
+  }
 }
 
 function sendText(event) {
@@ -1046,7 +1094,7 @@ function buildHistoryItem(entry) {
   head.className = "history-item-head";
   const badge = document.createElement("span");
   badge.className = `history-badge ${entry.mode === "companion" ? "is-companion" : ""}`;
-  badge.textContent = entry.mode === "companion" ? `陪伴${entry.personaName ? ` · ${entry.personaName}` : ""}` : "閱讀";
+  badge.textContent = entry.mode === "companion" ? "陪伴" : "閱讀";
   const title = document.createElement("strong");
   title.className = "history-item-title";
   title.textContent = deriveHistoryTitle(entry);
@@ -1067,7 +1115,7 @@ function buildHistoryItem(entry) {
     const row = document.createElement("div");
     row.className = `transcript-line ${line.role === "model" ? "is-model" : ""}`;
     const label = document.createElement("strong");
-    label.textContent = line.role === "model" ? (entry.personaName || "小書僮") : "你";
+    label.textContent = line.role === "model" ? "小書僮" : "你";
     const text = document.createElement("p");
     text.textContent = line.text;
     row.append(label, text);
@@ -1244,6 +1292,11 @@ function renderControls() {
   elements.callActions.classList.toggle("is-text-only", textOnly);
   elements.endButton.disabled = !state.started || state.ending;
   elements.muteButton.textContent = state.muted ? "開啟麥克風" : "麥克風靜音";
+  const sharing = Boolean(state.screenShare);
+  elements.screenShareButton.disabled = !sharing && (!state.started || state.ending || state.status === "connecting" || state.status === "permission");
+  elements.screenShareButton.textContent = sharing ? "停止分享" : "分享畫面";
+  elements.screenShareButton.classList.toggle("is-sharing", sharing);
+  elements.screenShareButton.setAttribute("aria-pressed", String(sharing));
   const canType = state.started && state.status !== "connecting" && state.status !== "permission" && state.status !== "reconnecting";
   elements.textInput.disabled = !canType;
   elements.sendButton.disabled = !canType;
@@ -1411,7 +1464,7 @@ function setStatus(status) {
     ? "speaking"
     : status === "listening"
       ? "listening"
-      : status === "connecting" || status === "reconnecting" || status === "permission"
+      : status === "connecting" || status === "reconnecting" || status === "permission" || status === "thinking"
         ? "thinking"
         : status === "failed"
           ? "interrupted"
@@ -1425,13 +1478,8 @@ function setStatus(status) {
 function connectionLabel(status) {
   return ({
     ready: "準備中", permission: "等待授權", connecting: "連線中", reconnecting: "重連中",
-    listening: "已連線", speaking: "回答中", "processing-memory": "整理中", failed: "錯誤", stopped: "已結束",
+    listening: "已連線", thinking: "思考中", speaking: "回答中", "processing-memory": "整理中", failed: "錯誤", stopped: "已結束",
   })[status] || status;
-}
-
-function excerpt(value, limit) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
 function setBusy(button, busy, label) {

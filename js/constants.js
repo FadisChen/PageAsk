@@ -47,7 +47,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
   companionSystemPrompt: DEFAULT_COMPANION_SYSTEM_PROMPT,
   companionMemoryEnabled: true,
   companionMemoryBudgetTokens: 3000,
-  browserToolsEnabled: false,
 });
 
 export const VOICES = Object.freeze([
@@ -63,8 +62,5 @@ export const MESSAGE_TYPES = Object.freeze({
   BLOCK_PICKED: "BLOCK_PICKED",
   BLOCK_PICK_CANCELLED: "BLOCK_PICK_CANCELLED",
   SOURCE_UPDATED: "SOURCE_UPDATED",
-  OPEN_SIDE_PANEL: "PAGEASK_OPEN_SIDE_PANEL",
   EXECUTE_BROWSER_TOOL: "EXECUTE_BROWSER_TOOL",
-  REQUEST_BROWSER_PERMISSIONS: "REQUEST_BROWSER_PERMISSIONS",
-  REQUEST_PAGE_ACCESS: "REQUEST_PAGE_ACCESS",
 });

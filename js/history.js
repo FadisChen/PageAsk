@@ -1,13 +1,11 @@
 import { MAX_HISTORY_ENTRIES, MAX_HISTORY_TOTAL_BYTES } from "./constants.js";
 import { cleanHistoryEntry, estimateStorageBytes, makeId } from "./storage.js";
 
-export function createHistoryEntry({ mode, personaId = null, personaName = "", sources = [], transcript, startedAt, endedAt }) {
+export function createHistoryEntry({ mode, sources = [], transcript, startedAt, endedAt }) {
   const now = Date.now();
   return cleanHistoryEntry({
     id: makeId(),
     mode,
-    personaId,
-    personaName,
     sourceTitles: (sources || []).map((source) => source?.title).filter(Boolean),
     transcript,
     startedAt: startedAt || now,
@@ -63,7 +61,6 @@ export function matchesHistorySearch(entry, query) {
   const needle = String(query || "").trim().toLocaleLowerCase("zh-TW");
   if (!needle) return true;
   const haystack = [
-    entry.personaName,
     ...(entry.sourceTitles || []),
     ...(entry.transcript || []).map((line) => line.text),
   ].join("\n").toLocaleLowerCase("zh-TW");
@@ -73,12 +70,11 @@ export function matchesHistorySearch(entry, query) {
 export function exportHistoryToMarkdown(entry) {
   const lines = [`# ${deriveHistoryTitle(entry)}`, ""];
   lines.push(`- 模式：${entry.mode === "companion" ? "陪伴" : "閱讀"}`);
-  if (entry.personaName) lines.push(`- 人格：${entry.personaName}`);
   if (entry.sourceTitles?.length) lines.push(`- 來源：${entry.sourceTitles.join("、")}`);
   lines.push(`- 時間：${new Date(entry.startedAt).toLocaleString("zh-TW")} - ${new Date(entry.endedAt).toLocaleString("zh-TW")}`);
   lines.push("");
   for (const line of entry.transcript) {
-    lines.push(`**${line.role === "model" ? (entry.personaName || "小書僮") : "你"}**：${line.text}`);
+    lines.push(`**${line.role === "model" ? "小書僮" : "你"}**：${line.text}`);
     lines.push("");
   }
   return `${lines.join("\n").trim()}\n`;
@@ -88,7 +84,7 @@ export function exportHistoryListToMarkdown(entries) {
   return entries.map(exportHistoryToMarkdown).join("\n---\n\n");
 }
 
-function excerpt(value, limit) {
+export function excerpt(value, limit) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }

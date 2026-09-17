@@ -116,11 +116,14 @@ export class BrowserAudioEngine {
   }
 
   flushPlayback() {
+    const wasPlaying = this.activeSources.size > 0;
     for (const source of this.activeSources) {
+      source.onended = null;
       try { source.stop(); } catch { /* Already stopped. */ }
     }
     this.activeSources.clear();
     if (this.context) this.nextPlayTime = this.context.currentTime;
+    if (wasPlaying) this.onOutputDrained?.();
   }
 
   async stop() {

@@ -40,7 +40,8 @@ export const YOUTUBE_FUNCTION_DECLARATION = Object.freeze({
 });
 
 const SPOKEN_RESPONSE_RULES = `- 回覆一律使用純文字的口語或自然對話方式，不要使用 Markdown 或其他格式標記，例如星號、井號、反引號、項目符號、標題、粗體、斜體、表格或程式碼區塊。
-- 需要列出多項內容時，改用自然連貫的句子或「第一、第二」等口頭說法，不要逐項使用符號。`;
+- 需要列出多項內容時，改用自然連貫的句子或「第一、第二」等口頭說法，不要逐項使用符號。
+- 若收到使用者分享的畫面影像，可依據畫面內容回答；沒有收到畫面時不要假裝看得到。`;
 
 export function buildSystemInstruction(source) {
   const locator = source.url ? `網址：${source.url}` : `檔案類型：${source.mimeType || "文字"}`;
@@ -207,8 +208,9 @@ export async function runYoutubeVideoAnalysis(url, {
   signal,
   fetchImpl = fetch,
 } = {}) {
-  const videoUrl = String(url || "").trim();
-  if (!videoUrl) throw new Error("YouTube 影片分析缺少網址。");
+  if (!String(url || "").trim()) throw new Error("YouTube 影片分析缺少網址。");
+  const videoUrl = safeYoutubeUrl(url);
+  if (!videoUrl) throw new Error("只支援公開的 YouTube 影片網址。");
   const prompt = String(question || "").trim() || "請提供這支影片的摘要與重點。";
   const videoMetadata = { fps: 0.5 };
   if (Number.isFinite(startOffsetSeconds)) videoMetadata.start_offset = `${Math.max(0, Math.floor(startOffsetSeconds))}s`;
@@ -449,6 +451,9 @@ export function createToolFunctionResponse(call, response, scheduling = "WHEN_ID
   };
 }
 
+// 1007 invalid argument / 1008 policy violation (e.g. invalid API key) will fail again on retry.
+const NON_RETRYABLE_CLOSE_CODES = new Set([1007, 1008]);
+
 export class LiveSession {
   constructor(config, callbacks = {}) {
     this.config = config;
@@ -580,7 +585,13 @@ export class LiveSession {
         turnComplete: true,
       },
     });
-    this.callbacks.onStatus?.("speaking");
+    this.callbacks.onStatus?.("thinking");
+    return true;
+  }
+
+  sendVideoFrame(bytes) {
+    if (!this.ready || !bytes?.byteLength) return false;
+    this.send({ realtimeInput: { video: { mimeType: "image/jpeg", data: bytesToBase64(bytes) } } });
     return true;
   }
 
@@ -731,7 +742,7 @@ export class LiveSession {
   }
 
   async handleYoutubeCall(call) {
-    const url = typeof call.args?.url === "string" ? call.args.url.trim() : "";
+    const url = safeYoutubeUrl(call.args?.url);
     const question = typeof call.args?.question === "string" ? call.args.question.trim() : "";
     const startOffsetSeconds = call.args?.start_offset_seconds;
     const endOffsetSeconds = call.args?.end_offset_seconds;
@@ -740,7 +751,7 @@ export class LiveSession {
     this.toolJobs.set(call.id, controller);
     this.callbacks.onYoutubeAnalysis?.({ id: call.id, url, question, status: "loading" });
     try {
-      const result = await runYoutubeVideoAnalysis(url, {
+      const result = await runYoutubeVideoAnalysis(url || call.args?.url, {
         question,
         startOffsetSeconds,
         endOffsetSeconds,
@@ -838,6 +849,11 @@ export class LiveSession {
     this.ready = false;
     this.socket = null;
     this.failures += 1;
+    if (NON_RETRYABLE_CLOSE_CODES.has(event.code)) {
+      this.callbacks.onStatus?.("failed");
+      this.callbacks.onError?.(new Error(`Live 連線被拒絕（${event.code}）${event.reason ? `：${event.reason}` : ""}`));
+      return;
+    }
     if (this.failures >= 3) {
       this.callbacks.onStatus?.("failed");
       this.callbacks.onError?.(new Error(`連線已中斷（${event.code || "無狀態碼"}）。請檢查網路、API key 與免費配額。`));
@@ -886,6 +902,13 @@ function safeHttpsUrl(value) {
   } catch {
     return "";
   }
+}
+
+const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"]);
+
+export function safeYoutubeUrl(value) {
+  const url = safeHttpsUrl(String(value || "").trim());
+  return url && YOUTUBE_HOSTS.has(new URL(url).hostname) ? url : "";
 }
 
 function bytesToBase64(bytes) {

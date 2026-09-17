@@ -15,6 +15,7 @@ PageAsk 是以 Chrome Manifest V3 Side Panel 為主要工作區的 Gemini Live �
 - 陪伴人格可編輯；長期記憶可新增、編輯、刪除、鎖定與會後整理
 - 對談歷史紀錄：搜尋、展開逐字稿、釘選、刪除與匯出 Markdown
 - 純文字模式：不申請麥克風也能使用 Live 文字輸入與字幕
+- 分享畫面：對談中以 Chrome 原生選擇器分享分頁、視窗或螢幕，每秒送一張 JPEG 給 Live
 - Side panel 內顯示 tool feed、grounding 來源、YouTube 結果與瀏覽器工具結果
 - 瀏覽器工具：分頁、歷史紀錄、書籤、Reading List、下載狀態
 - 會改變瀏覽器狀態的操作一律先顯示確認卡片
@@ -46,6 +47,7 @@ flowchart LR
 - `background.js`：執行 Chrome API、開啟 side panel、處理 runtime message
 - `js/gemini.js`：Gemini Live WebSocket、非同步 function calling、grounding、YouTube 與工具回應排程
 - `js/audio.js`：麥克風 AudioWorklet、PCM 音訊輸入、音訊播放與輸出分析器
+- `js/screen-share.js`：getDisplayMedia 畫面擷取、縮圖與 JPEG 影格
 - `js/file-parser.js`：PDF.js 與文字檔解析
 - `js/history.js` / `js/memory.js`：歷史紀錄與陪伴記憶的清理、上限、匯出與整理
 - `js/avatar/`：Three.js、VRM 載入、表情、手勢、狀態機與 lip-sync
@@ -84,7 +86,7 @@ Live client 不直接呼叫 Chrome API。瀏覽器操作集中在 service worker
 | 3D | Three.js | `^0.178.0` | WebGL 場景、動畫與音訊視覺化 |
 | VRM | `@pixiv/three-vrm` | `^3.4.0` | 載入與更新 VRM Avatar |
 | File parsing | PDF.js、OpenCC | vendor 目錄內嵌 | PDF 文字抽取與簡體轉臺灣繁體中文 |
-| Build | Vite | `^7.1.5` | 打包 side panel、options page 與 service worker |
+| Build | Vite | `^7.1.5` | 打包 side panel 與 service worker |
 | Test | Node.js test runner | Node.js 20.19+ 或 22.12+ | 單元與靜態驗證 |
 
 ## 安裝與建置
@@ -160,13 +162,13 @@ PageAsk/
 ├── background.js                 # MV3 service worker 與 Chrome API
 ├── content-picker.js              # 網頁區塊選取器
 ├── sidepanel.html / sidepanel.js # 主工作區
-├── options.html / options.js     # 獨立設定與模型存取測試頁
 ├── styles.css                    # Side panel 樣式
 ├── js/
 │   ├── constants.js              # 模型、聲線、storage 與來源 token 上限
 │   ├── gemini.js                 # Gemini Live 與非同步 tools
 │   ├── audio.js                  # 麥克風與音訊播放
 │   ├── audio-capture-worklet.js  # 麥克風 AudioWorklet
+│   ├── screen-share.js           # 分享畫面影格擷取
 │   ├── file-parser.js             # PDF、文字、JSON 來源解析
 │   ├── history.js                # 對談歷史建立、搜尋與匯出
 │   ├── memory.js                 # 記憶 token 預算與會後整理

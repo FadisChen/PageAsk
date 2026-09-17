@@ -3,6 +3,7 @@ import {
   MAX_SOURCE_TOKENS,
   SOURCE_TOKEN_WARNING_TOKENS,
 } from "./constants.js";
+import { estimateTokens, isCjkCharacter } from "./storage.js";
 
 const SOURCE_KINDS = new Set(["web-selection", "web-block", "file"]);
 
@@ -44,23 +45,7 @@ export function createActiveSource(input, limit = MAX_SOURCE_CHARS, tokenLimit =
   };
 }
 
-export function estimateSourceTokens(value) {
-  let cjk = 0;
-  let other = 0;
-  for (const character of String(value || "")) {
-    const code = character.codePointAt(0);
-    if (
-      (code >= 0x3000 && code <= 0x30ff)
-      || (code >= 0x4e00 && code <= 0x9fff)
-      || (code >= 0xff00 && code <= 0xffef)
-    ) {
-      cjk += 1;
-    } else {
-      other += 1;
-    }
-  }
-  return cjk + Math.ceil(other / 4);
-}
+export const estimateSourceTokens = estimateTokens;
 
 function retainWithinLimits(characters, maxChars, maxTokens) {
   let cjk = 0;
@@ -68,12 +53,7 @@ function retainWithinLimits(characters, maxChars, maxTokens) {
   let end = 0;
   for (const character of characters) {
     if (end >= maxChars) break;
-    const code = character.codePointAt(0);
-    const isCjk = (
-      (code >= 0x3000 && code <= 0x30ff)
-      || (code >= 0x4e00 && code <= 0x9fff)
-      || (code >= 0xff00 && code <= 0xffef)
-    );
+    const isCjk = isCjkCharacter(character);
     const nextCjk = cjk + Number(isCjk);
     const nextOther = other + Number(!isCjk);
     if (nextCjk + Math.ceil(nextOther / 4) > maxTokens) break;

@@ -24,6 +24,7 @@ import {
   probeLiveModel,
   runGrounding,
   runYoutubeVideoAnalysis,
+  safeYoutubeUrl,
 } from "../js/gemini.js";
 
 const source = {
@@ -259,6 +260,20 @@ test("youtube analysis request defaults video_metadata to fps 0.5 and falls back
   assert.equal(textPart.text, "請提供這支影片的摘要與重點。");
 });
 
+test("youtube analysis only accepts https YouTube URLs", async () => {
+  assert.equal(safeYoutubeUrl("https://youtu.be/xxxx"), "https://youtu.be/xxxx");
+  assert.equal(safeYoutubeUrl("https://m.youtube.com/watch?v=xxxx"), "https://m.youtube.com/watch?v=xxxx");
+  assert.equal(safeYoutubeUrl("javascript:alert(1)"), "");
+  assert.equal(safeYoutubeUrl("http://www.youtube.com/watch?v=xxxx"), "");
+  assert.equal(safeYoutubeUrl("https://youtube.com.evil.example/watch"), "");
+  let fetched = false;
+  await assert.rejects(
+    runYoutubeVideoAnalysis("https://example.com/video.mp4", { apiKey: "key", fetchImpl: async () => { fetched = true; } }),
+    /只支援公開的 YouTube/,
+  );
+  assert.equal(fetched, false);
+});
+
 test("youtube analysis rejects an empty answer", async () => {
   const fetchImpl = async () => ({ ok: true, json: async () => ({ candidates: [] }) });
   await assert.rejects(
@@ -367,6 +382,68 @@ test("stopped live sessions do not retain microphone audio", () => {
   session.sendAudio(new Uint8Array([1, 2, 3]));
   assert.equal(session.audioBufferBytes, 0);
   assert.deepEqual(session.audioBuffer, []);
+});
+
+test("rejected Live connections fail immediately with the server reason instead of reconnecting", () => {
+  const statuses = [];
+  const errors = [];
+  const session = new LiveSession(
+    { apiKey: "bad", systemInstruction: "測試" },
+    { onStatus: (status) => statuses.push(status), onError: (error) => errors.push(error) },
+  );
+  const socket = {};
+  session.stopped = false;
+  session.socket = socket;
+  session.connect = () => assert.fail("must not reconnect");
+  session.handleClose(socket, { code: 1008, reason: "API key not valid. Please pass a valid API key." });
+  assert.equal(session.reconnectTimer, null);
+  assert.deepEqual(statuses, ["failed"]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /API key not valid/);
+  assert.equal(friendlyApiError(errors[0]), "API key 無效，請到設定頁重新輸入。");
+});
+
+test("transient Live disconnects still schedule a reconnect", () => {
+  const statuses = [];
+  const session = new LiveSession({ apiKey: "test", systemInstruction: "測試" }, { onStatus: (status) => statuses.push(status) });
+  const socket = {};
+  session.stopped = false;
+  session.socket = socket;
+  session.handleClose(socket, { code: 1006, reason: "" });
+  assert.deepEqual(statuses, ["reconnecting"]);
+  assert.ok(session.reconnectTimer);
+  session.stop(false);
+});
+
+test("screen frames are sent as realtime JPEG video only when the session is ready", () => {
+  const sent = [];
+  const session = new LiveSession({ apiKey: "test", systemInstruction: "測試" });
+  session.socket = { readyState: 1, send: (payload) => sent.push(JSON.parse(payload)) };
+  const originalWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = { OPEN: 1 };
+  try {
+    assert.equal(session.sendVideoFrame(new Uint8Array([255, 216, 255])), false);
+    session.ready = true;
+    assert.equal(session.sendVideoFrame(new Uint8Array([255, 216, 255])), true);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+  assert.deepEqual(sent, [{ realtimeInput: { video: { mimeType: "image/jpeg", data: "/9j/" } } }]);
+});
+
+test("sending text marks the model as thinking until a response arrives", () => {
+  const statuses = [];
+  const session = new LiveSession({ apiKey: "test", systemInstruction: "測試" }, { onStatus: (status) => statuses.push(status) });
+  session.ready = true;
+  session.socket = { readyState: 1, send: () => {} };
+  const originalWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = { OPEN: 1 };
+  try {
+    session.sendText("你好");
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+  assert.deepEqual(statuses, ["thinking"]);
 });
 
 test("text input uses client content with an explicit user role", () => {

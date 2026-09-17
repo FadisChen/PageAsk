@@ -10,7 +10,7 @@ test("manifest uses minimum MV3 permissions and local-only extension code", asyn
   const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.minimum_chrome_version, "120");
-  assert.deepEqual(manifest.permissions.sort(), ["activeTab", "contextMenus", "scripting", "sidePanel", "storage"].sort());
+  assert.deepEqual(manifest.permissions.sort(), ["activeTab", "contextMenus", "scripting", "sidePanel", "storage", "unlimitedStorage"].sort());
   assert.deepEqual(manifest.optional_permissions.sort(), ["bookmarks", "downloads", "history", "readingList", "tabs"].sort());
   assert.deepEqual(manifest.host_permissions, ["https://generativelanguage.googleapis.com/*"]);
   assert.deepEqual(manifest.optional_host_permissions.sort(), ["http://*/*", "https://*/*"].sort());
@@ -21,7 +21,7 @@ test("manifest uses minimum MV3 permissions and local-only extension code", asyn
 });
 
 test("HTML IDs are unique and all script resources are local", async () => {
-  for (const file of ["sidepanel.html", "options.html"]) {
+  for (const file of ["sidepanel.html"]) {
     const html = await readFile(path.join(root, file), "utf8");
     const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
     assert.equal(new Set(ids).size, ids.length, `${file} contains duplicate IDs`);
@@ -53,11 +53,11 @@ test("side panel declares TranscriptCollector before creating state", async () =
   assert.ok(declaration < initialization, "TranscriptCollector must be declared before initialization");
 });
 
-test("temporary content clears only when hiding an idle side panel or changing modes", async () => {
+test("temporary content clears only when closing the side panel or changing modes", async () => {
   const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
   const storage = await readFile(path.join(root, "js", "storage.js"), "utf8");
   assert.match(storage, /export async function clearSource\(\)[\s\S]*?storage\.session\.remove\(SOURCE_KEY\)/);
-  assert.match(panel, /document\.addEventListener\("visibilitychange",[\s\S]*?document\.visibilityState === "hidden" &&[\s\S]*?!state\.started &&[\s\S]*?!state\.ending &&[\s\S]*?!state\.memoryProcessing[\s\S]*?clearTemporaryContent\(\)/);
+  assert.doesNotMatch(panel, /visibilitychange/);
   assert.match(panel, /window\.addEventListener\("beforeunload",[\s\S]*?state\.session\?\.stop\(false\);[\s\S]*?clearTemporaryContent\(\)/);
   assert.match(panel, /async function clearTemporaryContent\(\)[\s\S]*?state\.transcript = new TranscriptCollector\(\);[\s\S]*?state\.source = null;[\s\S]*?await clearSource\(\)/);
   assert.match(panel, /async function setConversationMode\(mode\)[\s\S]*?await clearTemporaryContent\(\)/);
@@ -118,13 +118,10 @@ test("text-only mode starts Live without requesting microphone capture", async (
   assert.match(panel, /requestAnimationFrame\(\(\) => \{/);
 });
 
-test("options page exposes only the Gemini 3.8 Live settings", async () => {
-  const html = await readFile(path.join(root, "options.html"), "utf8");
-  const script = await readFile(path.join(root, "options.js"), "utf8");
-  assert.match(html, /Live 模型固定使用 Gemini 3\.8 Live/);
-  assert.doesNotMatch(html, /id="liveModel"/);
-  assert.doesNotMatch(html, /thinkingLevel|thinkingConfig/);
-  assert.doesNotMatch(script, /liveThinking|describeLiveThinking/);
+test("settings live only in the side panel without a separate options page", async () => {
+  const config = await readFile(path.join(root, "vite.config.js"), "utf8");
+  assert.doesNotMatch(config, /options\.html/);
+  await assert.rejects(readFile(path.join(root, "options.html"), "utf8"));
 });
 
 test("streaming transcript updates existing rows instead of rebuilding the full list", async () => {
@@ -167,6 +164,23 @@ test("Avatar stays in the side panel with subtitles over the canvas", async () =
   assert.match(html, /id="captionText"/);
   assert.doesNotMatch(html, /showOverlayButton|closeOverlaysButton|voiceStatus|voiceHint/);
   assert.doesNotMatch(panel, /syncOverlay|claimSidePanelSession/);
+});
+
+test("screen sharing uses the Chrome picker and stops with the session", async () => {
+  const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
+  const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
+  const share = await readFile(path.join(root, "js", "screen-share.js"), "utf8");
+  assert.match(html, /id="screenShareButton"[^>]*disabled/);
+  assert.match(share, /getDisplayMedia\(/);
+  assert.match(share, /image\/jpeg/);
+  assert.match(panel, /sendVideoFrame\(bytes\)/);
+  assert.match(panel, /async function endSession[\s\S]*?state\.screenShare\?\.stop\(\)/);
+});
+
+test("screen frames are scaled down to the maximum edge", async () => {
+  const { fitFrame } = await import("../js/screen-share.js");
+  assert.deepEqual(fitFrame(1920, 1080, 1024), { width: 1024, height: 576 });
+  assert.deepEqual(fitFrame(800, 600, 1024), { width: 800, height: 600 });
 });
 
 test("browser tools are confirmation-aware and use safe web URLs", async () => {
