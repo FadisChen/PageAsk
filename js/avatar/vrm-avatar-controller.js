@@ -5,7 +5,7 @@ import { AVATAR_EMOTIONS } from "./emotions.js";
 import { AvatarGesturePlayer } from "./gestures.js";
 
 const NATURAL_ARM_DROP = 1.25;
-const PLACEMENT_YAW = THREE.MathUtils.degToRad(15);
+const PLACEMENT_YAW = THREE.MathUtils.degToRad(8);
 const SHA_MOUTH_INTENSITY = 0.45;
 const EXPRESSION_ALIASES = {
   neutral: ["neutral", "Neutral"],

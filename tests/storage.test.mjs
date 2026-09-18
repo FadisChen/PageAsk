@@ -23,6 +23,7 @@ test("legacy settings receive companion defaults without losing existing values"
   assert.equal(settings.liveModel, DEFAULT_LIVE_MODEL);
   assert.equal(settings.voiceName, "Aoede");
   assert.equal(settings.conversationMode, "reading");
+  assert.equal(settings.avatarMode, "vrm");
   assert.equal(settings.companionSystemPrompt, DEFAULT_COMPANION_SYSTEM_PROMPT);
   assert.equal(settings.companionMemoryEnabled, true);
   assert.equal(settings.companionMemoryBudgetTokens, 3000);
@@ -45,6 +46,11 @@ test("companion settings are validated and bounded", () => {
   assert.equal(settings.companionSystemPrompt, DEFAULT_COMPANION_SYSTEM_PROMPT);
   assert.equal(settings.companionMemoryEnabled, false);
   assert.equal(settings.companionMemoryBudgetTokens, 12000);
+});
+
+test("avatar mode accepts true-man and falls back to VRM for unknown values", () => {
+  assert.equal(cleanSettings({ avatarMode: "true-man" }).avatarMode, "true-man");
+  assert.equal(cleanSettings({ avatarMode: "unknown" }).avatarMode, "vrm");
 });
 
 test("memories clean, create, and update with stable identity", () => {

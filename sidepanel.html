@@ -53,7 +53,8 @@
       </div>
 
       <div class="voice-stage" id="voiceStage">
-        <canvas class="avatar-canvas" id="avatarCanvas" aria-label="小書僮 Avatar，可用拖曳旋轉與滾輪縮放"></canvas>
+        <canvas class="avatar-canvas" id="avatarCanvas" aria-label="小書僮 VRM Avatar，可用拖曳旋轉與滾輪縮放"></canvas>
+        <canvas class="avatar-canvas is-hidden" id="trueManAvatarCanvas" aria-label="小書僮真人模式 Avatar" aria-hidden="true"></canvas>
         <div class="avatar-fallback" id="avatarFallback" aria-hidden="true">
           <span class="avatar-fallback-mark">PA</span>
           <span>Avatar 載入中</span>
@@ -142,10 +143,9 @@
       </header>
 
       <div class="dialog-body">
-        <div class="dialog-field"><label>瀏覽器工具</label><p>允許後可查詢分頁與瀏覽器資料；變更操作會先詢問確認。</p><button class="button button-secondary button-small" id="enableBrowserToolsButton" type="button">啟用瀏覽器工具</button></div>
+        <div class="dialog-field"><label>瀏覽器工具</label><button class="button button-secondary button-small" id="enableBrowserToolsButton" type="button">啟用瀏覽器工具</button></div>
         <div class="dialog-field">
           <label for="settingsApiKey">Gemini API key</label>
-          <p>金鑰會未加密地保存在這個 Chrome 使用者設定檔。</p>
           <div class="secret-field">
             <input id="settingsApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" required>
             <button id="settingsToggleKeyButton" type="button">顯示</button>
@@ -162,6 +162,11 @@
           <select id="settingsVoiceName"></select>
         </div>
 
+        <label class="switch-row" for="settingsTrueManMode">
+          <span><strong>真人模式</strong></span>
+          <input id="settingsTrueManMode" type="checkbox">
+        </label>
+
         <section class="dialog-section" aria-labelledby="companionSettingsTitle">
           <div class="dialog-section-heading">
             <span>COMPANION · 03</span>
@@ -170,7 +175,6 @@
 
           <div class="dialog-field">
             <label for="settingsCompanionPrompt">陪伴模式 system prompt</label>
-            <p>你可以調整小書僮的人格與互動風格；繁中、安全與記憶邊界會由程式固定附加。</p>
             <textarea id="settingsCompanionPrompt" maxlength="12000" rows="7"></textarea>
             <div class="field-actions">
               <button class="text-button" id="settingsResetPromptButton" type="button">恢復預設人格</button>
@@ -178,7 +182,7 @@
           </div>
 
           <label class="switch-row" for="settingsMemoryEnabled">
-            <span><strong>啟用長期記憶</strong><small>會後整理值得保留的資訊，下次陪伴對談再使用。</small></span>
+            <span><strong>啟用長期記憶</strong></span>
             <input id="settingsMemoryEnabled" type="checkbox">
           </label>
 
@@ -213,10 +217,6 @@
           <button class="button button-secondary" id="settingsTestButton" type="button">測試並儲存</button>
           <span class="test-status" id="settingsTestStatus" role="status"></span>
         </div>
-
-        <aside class="dialog-privacy">
-          網頁內容、檔案文字、陪伴對談與會後記憶整理會直接送往 Google。長期記憶未加密保存在這個 Chrome 使用者設定檔。
-        </aside>
       </div>
 
       <footer class="dialog-footer">

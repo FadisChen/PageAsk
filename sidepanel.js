@@ -1,6 +1,7 @@
 import { BrowserAudioEngine } from "./js/audio.js";
 import { AvatarStateMachine } from "./js/avatar/state-machine.js";
 import { LipSyncAnalyzer } from "./js/avatar/lip-sync.js";
+import { TrueManAvatarController } from "./js/avatar/true-man-avatar-controller.js";
 import { VrmAvatarController } from "./js/avatar/vrm-avatar-controller.js";
 import {
   BROWSER_TOOL_DECLARATIONS,
@@ -112,7 +113,7 @@ const elements = Object.fromEntries([
   "settingsButton", "historyButton", "readingModeButton", "companionModeButton",
   "sourceSection", "sourceState", "sourceCard", "sourceKind", "sourceTitle", "sourcePreview",
   "sourceLink", "sourceWarning", "pickBlockButton", "uploadButton", "fileInput", "clearSourceButton",
-  "conversationHeading", "connectionPill", "connectionText", "voiceStage", "levelBar", "avatarCanvas", "avatarFallback",
+  "conversationHeading", "connectionPill", "connectionText", "voiceStage", "levelBar", "avatarCanvas", "trueManAvatarCanvas", "avatarFallback",
   "enableBrowserToolsButton",
   "sourceDetailsButton", "sourceSummaryTitle", "sourceDialog", "sourceCloseButton",
   "captionText", "transcriptButton", "transcriptDialog", "transcriptCloseButton", "latestTranscriptButton",
@@ -122,7 +123,7 @@ const elements = Object.fromEntries([
   "textOnlyMode",
   "settingsDialog", "panelSettingsForm", "settingsCloseButton", "settingsCancelButton",
   "settingsApiKey", "settingsToggleKeyButton",
-  "settingsVoiceName", "settingsTestButton", "settingsTestStatus",
+  "settingsVoiceName", "settingsTrueManMode", "settingsTestButton", "settingsTestStatus",
   "settingsCompanionPrompt", "settingsResetPromptButton", "settingsMemoryEnabled", "settingsMemoryBudget",
   "memoryUsage", "newMemoryButton", "newMemoryEditor", "newMemoryContent", "newMemoryLocked",
   "saveNewMemoryButton", "cancelNewMemoryButton", "memoryList",
@@ -133,6 +134,9 @@ let microphonePermissionStatus = null;
 let transcriptRenderPending = false;
 let followTranscript = true;
 let avatarController = null;
+let avatarControllerMode = null;
+let avatarLoadToken = 0;
+let avatarSwitching = false;
 let lipSync = null;
 let avatarFrameTime = performance.now();
 let avatarPendingDelta = 0;
@@ -300,18 +304,85 @@ async function clearCurrentSource() {
 }
 
 async function initializeAvatar() {
+  const requestedMode = state.settings.avatarMode;
   try {
-    avatarController = new VrmAvatarController(elements.avatarCanvas, {
-      onLoading: (progress) => { elements.avatarFallback.classList.remove("is-hidden"); elements.avatarFallback.querySelector("span:last-child").textContent = `Avatar ${Math.round(progress * 100)}%`; },
-      onReady: () => elements.avatarFallback.classList.add("is-hidden"),
-      onError: (error) => { elements.avatarFallback.classList.remove("is-hidden"); elements.avatarFallback.querySelector("span:last-child").textContent = "Avatar 無法載入"; console.warn("PageAsk Avatar:", error.message); },
-    });
-    await avatarController.load(chrome.runtime.getURL("avatars/sha.vrm"));
+    const controller = await prepareAvatarController(requestedMode);
+    commitAvatarController(controller, requestedMode);
   } catch (error) {
-    elements.avatarFallback.querySelector("span:last-child").textContent = "語音模式";
     console.warn("PageAsk Avatar 初始化失敗：", error.message);
+    if (requestedMode !== "vrm") {
+      try {
+        const fallback = await prepareAvatarController("vrm");
+        commitAvatarController(fallback, "vrm");
+        state.settings = await saveSettings({ ...state.settings, avatarMode: "vrm" });
+        toast("真人模式素材無法載入，已暫時切回 VRM Avatar。", true);
+      } catch (fallbackError) {
+        console.warn("PageAsk VRM Avatar fallback 失敗：", fallbackError.message);
+      }
+    }
+    if (!avatarController) {
+      elements.avatarFallback.classList.remove("is-hidden");
+      elements.avatarFallback.querySelector("span:last-child").textContent = "語音模式";
+    }
   }
+  renderAvatarSurface();
   requestAnimationFrame(updateAvatarFrame);
+}
+
+async function prepareAvatarController(mode) {
+  const requestToken = ++avatarLoadToken;
+  let loadError = null;
+  const canvas = mode === "true-man" ? elements.trueManAvatarCanvas : elements.avatarCanvas;
+  const controller = mode === "true-man"
+    ? new TrueManAvatarController(canvas, {
+      onLoading: (progress) => showAvatarLoading(mode, progress, requestToken),
+      onError: (error) => { loadError = error; showAvatarError(mode, error, requestToken); },
+    })
+    : new VrmAvatarController(canvas, {
+      onLoading: (progress) => showAvatarLoading(mode, progress, requestToken),
+      onError: (error) => { loadError = error; showAvatarError(mode, error, requestToken); },
+    });
+  const modelUrl = mode === "true-man"
+    ? chrome.runtime.getURL("avatars/true-man/avatar-manifest.json")
+    : chrome.runtime.getURL("avatars/sha.vrm");
+  const loaded = await controller.load(modelUrl);
+  if (requestToken !== avatarLoadToken) {
+    controller.dispose();
+    return null;
+  }
+  if (!loaded) {
+    controller.dispose();
+    throw loadError || new Error(`${mode === "true-man" ? "真人" : "VRM"} Avatar 載入失敗。`);
+  }
+  return controller;
+}
+
+function commitAvatarController(controller, mode) {
+  if (!controller) throw new Error("Avatar controller 建立失敗。");
+  const previous = avatarController;
+  avatarController = controller;
+  avatarControllerMode = mode;
+  avatarController.setState(avatarStateMachine.state);
+  avatarController.resetAnimation?.();
+  avatarPendingDelta = 0;
+  renderAvatarSurface();
+  avatarController.resize?.();
+  elements.avatarFallback.classList.add("is-hidden");
+  previous?.dispose();
+}
+
+function showAvatarLoading(mode, progress, requestToken) {
+  if (requestToken !== avatarLoadToken || avatarController) return;
+  elements.avatarFallback.classList.remove("is-hidden");
+  const label = mode === "true-man" ? "真人 Avatar" : "Avatar";
+  elements.avatarFallback.querySelector("span:last-child").textContent = `${label} ${Math.round(progress * 100)}%`;
+}
+
+function showAvatarError(mode, error, requestToken) {
+  if (requestToken !== avatarLoadToken || avatarController) return;
+  elements.avatarFallback.classList.remove("is-hidden");
+  elements.avatarFallback.querySelector("span:last-child").textContent = "Avatar 無法載入";
+  console.warn(`PageAsk ${mode === "true-man" ? "真人" : "VRM"} Avatar:`, error.message);
 }
 
 function updateAvatarFrame(now) {
@@ -507,6 +578,7 @@ async function openSettings() {
   state.memories = await loadMemories();
   elements.settingsApiKey.value = state.settings.apiKey;
   elements.settingsVoiceName.value = state.settings.voiceName;
+  elements.settingsTrueManMode.checked = state.settings.avatarMode === "true-man";
   elements.settingsCompanionPrompt.value = state.settings.companionSystemPrompt;
   elements.settingsMemoryEnabled.checked = state.settings.companionMemoryEnabled;
   elements.settingsMemoryBudget.value = state.settings.companionMemoryBudgetTokens;
@@ -641,7 +713,7 @@ async function testAndSaveSettings() {
     await probeLiveModel(next.apiKey, {
       voiceName: next.voiceName,
     });
-    state.settings = await saveSettings(next);
+    state.settings = await saveSettingsWithAvatar(next);
     showSettingsTestStatus("Live 連線成功，設定已儲存。", false, true);
     if (state.memoryProcessing) return;
     const fitted = await saveMemoriesWithinBudget(state.memories, state.settings.companionMemoryBudgetTokens);
@@ -655,11 +727,38 @@ async function testAndSaveSettings() {
   }
 }
 
+async function saveSettingsWithAvatar(next) {
+  let prepared = null;
+  avatarSwitching = true;
+  renderAll();
+  try {
+    if (next.avatarMode !== state.settings.avatarMode) {
+      prepared = await prepareAvatarController(next.avatarMode);
+    }
+    const saved = await saveSettings(next);
+    if (prepared) commitAvatarController(prepared, next.avatarMode);
+    state.settings = saved;
+    return saved;
+  } catch (error) {
+    prepared?.dispose();
+    throw error;
+  } finally {
+    avatarSwitching = false;
+    renderAll();
+  }
+}
+
 async function submitSettings(event) {
   event.preventDefault();
   const next = readSettingsForm();
   if (!next) return;
-  state.settings = await saveSettings(next);
+  try {
+    state.settings = await saveSettingsWithAvatar(next);
+  } catch (error) {
+    showSettingsTestStatus(error.message || "Avatar 模式切換失敗。", true);
+    toast(error.message || "Avatar 模式切換失敗，設定未儲存。", true);
+    return;
+  }
   closeSettings();
   if (state.memoryProcessing) {
     renderAll();
@@ -681,6 +780,7 @@ function readSettingsForm() {
     ...state.settings,
     apiKey,
     voiceName: elements.settingsVoiceName.value,
+    avatarMode: elements.settingsTrueManMode.checked ? "true-man" : "vrm",
     companionSystemPrompt: elements.settingsCompanionPrompt.value,
     companionMemoryEnabled: elements.settingsMemoryEnabled.checked,
     companionMemoryBudgetTokens: Number(elements.settingsMemoryBudget.value),
@@ -1258,6 +1358,7 @@ function renderMode() {
 
 function renderAll() {
   renderMode();
+  renderAvatarSurface();
   renderSource();
   renderControls();
   renderTranscript();
@@ -1265,6 +1366,17 @@ function renderAll() {
   renderSurface();
   renderConfirmations();
   renderStatus();
+}
+
+function renderAvatarSurface() {
+  const mode = avatarControllerMode || state.settings.avatarMode;
+  const trueMan = mode === "true-man";
+  elements.voiceStage.dataset.avatarMode = mode;
+  elements.avatarCanvas.classList.toggle("is-hidden", trueMan);
+  elements.trueManAvatarCanvas.classList.toggle("is-hidden", !trueMan);
+  elements.avatarCanvas.setAttribute("aria-hidden", String(trueMan));
+  elements.trueManAvatarCanvas.setAttribute("aria-hidden", String(!trueMan));
+  elements.settingsTrueManMode.disabled = state.started || state.ending || state.memoryProcessing || avatarSwitching;
 }
 
 function renderSurface() {
@@ -1325,6 +1437,7 @@ function renderControls() {
   elements.clearSourceButton.disabled = !state.source || state.ending || state.memoryProcessing;
   elements.startButton.disabled = controlsLocked || (requiresSource && !state.source);
   elements.textOnlyMode.disabled = controlsLocked;
+  elements.settingsTrueManMode.disabled = controlsLocked || avatarSwitching;
   elements.muteButton.disabled = !state.started || state.ending || !state.microphoneActive;
   elements.muteButton.classList.toggle("is-hidden", textOnly);
   elements.callActions.classList.toggle("is-text-only", textOnly);

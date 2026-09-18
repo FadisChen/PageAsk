@@ -1,5 +1,6 @@
 import {
   CONVERSATION_MODES,
+  AVATAR_MODES,
   DEFAULT_SETTINGS,
   getLiveModelOption,
   HISTORY_KEY,
@@ -33,6 +34,9 @@ export function cleanSettings(value) {
     conversationMode: CONVERSATION_MODES.includes(settings.conversationMode)
       ? settings.conversationMode
       : DEFAULT_SETTINGS.conversationMode,
+    avatarMode: AVATAR_MODES.includes(settings.avatarMode)
+      ? settings.avatarMode
+      : DEFAULT_SETTINGS.avatarMode,
     companionSystemPrompt: cleanString(
       settings.companionSystemPrompt,
       DEFAULT_SETTINGS.companionSystemPrompt,

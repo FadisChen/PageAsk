@@ -65,7 +65,7 @@ test("production model configuration uses Gemini 3.8 Live and the Search compati
   assert.equal(DEFAULT_LIVE_MODEL, "gemini-3.8-live");
   assert.deepEqual(LIVE_MODEL_OPTIONS.map((option) => option.id), ["gemini-3.8-live"]);
   assert.equal(GROUNDING_MODEL, "gemini-2.5-flash");
-  assert.equal(AUXILIARY_MODEL, "gemini-3.8-flash");
+  assert.equal(AUXILIARY_MODEL, "gemini-3.5-flash-lite");
 });
 
 test("system instruction scopes reference text as untrusted data", () => {

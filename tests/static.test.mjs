@@ -38,7 +38,7 @@ test("production source contains only the approved models and no fallback provid
   const modelNames = [...source.matchAll(/gemini-[a-z0-9.-]+/gi)].map((match) => match[0]);
   assert.deepEqual([...new Set(modelNames)].sort(), [
     "gemini-2.5-flash",
-    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
     "gemini-3.8-live",
   ]);
   assert.doesNotMatch(source, /tavily|googleMaps|<all_urls>/i);
@@ -161,9 +161,35 @@ test("Avatar stays in the side panel with subtitles over the canvas", async () =
   const html = await readFile(path.join(root, "sidepanel.html"), "utf8");
   const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
   assert.match(html, /id="avatarCanvas"/);
+  assert.match(html, /id="trueManAvatarCanvas"/);
+  assert.match(html, /id="settingsTrueManMode"/);
   assert.match(html, /id="captionText"/);
+  assert.match(panel, /TrueManAvatarController/);
+  assert.match(panel, /saveSettingsWithAvatar/);
   assert.doesNotMatch(html, /showOverlayButton|closeOverlaysButton|voiceStatus|voiceHint/);
   assert.doesNotMatch(panel, /syncOverlay|claimSidePanelSession/);
+});
+
+test("真人 Avatar keeps the shared output-drained controller interface", async () => {
+  const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
+  const controller = await readFile(path.join(root, "js", "avatar", "true-man-avatar-controller.js"), "utf8");
+  assert.match(panel, /avatarController\?\.resetAnimation\(\)/);
+  assert.match(controller, /resetAnimation\(\)\s*\{\s*this\.reset\(\);\s*\}/);
+});
+
+test("真人 Avatar assets are local and use only the required variants", async () => {
+  const manifest = JSON.parse(await readFile(path.join(root, "avatars", "true-man", "avatar-manifest.json"), "utf8"));
+  const required = [
+    manifest.base,
+    manifest.blink,
+    ...Object.values(manifest.visemes),
+    ...Object.values(manifest.emotions).filter(Boolean),
+  ];
+  for (const relativePath of required) {
+    await readFile(path.resolve(root, "avatars", "true-man", relativePath.replace(/^\.\//, "")));
+  }
+  assert.equal("gaze" in manifest, false);
+  await assert.rejects(readFile(path.join(root, "avatars", "true-man", "assets", "variants-v5", "gaze-left.png")));
 });
 
 test("screen sharing uses the Chrome picker and stops with the session", async () => {
