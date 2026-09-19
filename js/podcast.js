@@ -1,9 +1,24 @@
 import { API_BASE, AUXILIARY_MODEL, PODCAST_TTS_MODEL } from "./constants.js";
 
 export const PODCAST_FORMATS = Object.freeze(["solo", "duo"]);
+// Kept for compatibility; prompt length is now selected from the source size.
 export const PODCAST_TARGET_WORDS = 420;
 export const PODCAST_SEGMENT_MAX_CHARS = 1800;
 const PODCAST_SAMPLE_RATE = 24000;
+
+function getPodcastLengthGuide(material) {
+  const contentLength = material.replace(/\s/g, "").length;
+  if (contentLength <= 1500) return "約 650–900 字";
+  if (contentLength <= 5000) return "約 1,100–1,700 字";
+  if (contentLength <= 12000) return "約 1,800–2,800 字";
+  return "約 2,800–4,200 字";
+}
+
+function buildPodcastDepthGuide(lengthGuide) {
+  return `先判斷素材的篇幅、資訊密度、論點數量與複雜度，再依此安排內容深度與長度；本次建議長度為 ${lengthGuide}，不要把所有文章都壓縮成固定的短摘要。
+講稿必須盡量完整涵蓋素材中的：核心主旨或問題、必要背景與關鍵名詞、主要論點或事件脈絡、素材提供的證據／數據／例子、不同觀點／限制／代價（若素材有提到），以及對讀者有用的影響或結論。
+每個重要論點都要說明「為什麼重要」或「如何影響讀者」，使用自然轉折把內容串成有脈絡的敘事；不要只列點、不要用空泛的開場或重複結論來灌水。只能根據素材作答，不要捏造素材沒有提供的事實；素材不足時，明確保留不確定性。`;
+}
 
 function readJson(response) {
   return response.json().catch(() => ({}));
@@ -15,15 +30,20 @@ function httpErrorFromData(response, data, model) {
 
 export function buildPodcastScriptPrompt(sourceText, format, voice1, voice2) {
   const material = String(sourceText || "").trim();
+  const lengthGuide = getPodcastLengthGuide(material);
+  const depthGuide = buildPodcastDepthGuide(lengthGuide);
   if (format === "duo") {
-    return `請將以下素材整理成一段約 ${PODCAST_TARGET_WORDS} 字的繁體中文 Podcast 雙人對談講稿。
-兩位講者代號分別是「${voice1}」與「${voice2}」，語氣要輕鬆自然、像在錄音給聽眾聽，兩人需互相問答、補充或延伸重點，不是各自獨白。
+    return `請將以下素材整理成一段有內容深度的繁體中文 Podcast 雙人對談講稿。
+${depthGuide}
+兩位講者代號分別是「${voice1}」與「${voice2}」。對談要像真正的主持人與來賓共同拆解文章：一方提出關鍵問題、要求解釋或提出合理質疑，另一方根據素材回答、補充與舉例；兩人要互相接續並平衡發言，不是輪流各自獨白，也不是把文章逐句改寫。
 請用「${voice1}:」與「${voice2}:」開頭區分台詞，只輸出對話內容本身，不要標題、不要其他說明文字，全程使用台灣用語與連接詞。
 
 素材：
 ${material}`;
   }
-  return `請將以下素材整理成一篇約 ${PODCAST_TARGET_WORDS} 字的繁體中文單人 Podcast 講稿，語氣輕鬆自然、像主持人講給聽眾聽，開頭簡短破題、結尾自然收尾。只輸出講稿內容本身，不要標題或其他說明文字，全程使用台灣用語與連接詞。
+  return `請將以下素材整理成一篇有內容深度的繁體中文單人 Podcast 講稿。
+${depthGuide}
+語氣要輕鬆自然、像主持人講給聽眾聽；開頭先交代主題與聽眾為何值得了解，中段按邏輯深入解釋，結尾整理影響與可帶走的重點。只輸出講稿內容本身，不要標題或其他說明文字，全程使用台灣用語與連接詞。
 
 素材：
 ${material}`;
@@ -37,7 +57,11 @@ export async function generatePodcastScript(apiKey, sourceText, format, { voice1
     signal,
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.8, thinkingConfig: { thinkingLevel: "minimal" } },
+      generationConfig: {
+        temperature: 0.75,
+        maxOutputTokens: 4096,
+        thinkingConfig: { thinkingLevel: "minimal" },
+      },
     }),
   });
   const data = await readJson(response);

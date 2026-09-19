@@ -19,6 +19,16 @@ test("solo prompt asks for a single narrator and omits speaker labels", () => {
   assert.match(prompt, /素材內容/);
 });
 
+test("podcast prompt scales depth and length with the source", () => {
+  const shortPrompt = buildPodcastScriptPrompt("短文內容。".repeat(100), "solo", "Kore", "Puck");
+  const longPrompt = buildPodcastScriptPrompt("長文內容，包含多個論點與背景脈絡。".repeat(1500), "solo", "Kore", "Puck");
+
+  assert.match(shortPrompt, /約 650–900 字/);
+  assert.match(longPrompt, /約 2,800–4,200 字/);
+  assert.match(longPrompt, /核心主旨|必要背景|證據／數據／例子/);
+  assert.doesNotMatch(shortPrompt, /約 420 字/);
+});
+
 test("duo prompt names both speakers using their voice ids as labels", () => {
   const prompt = buildPodcastScriptPrompt("素材內容", "duo", "Kore", "Puck");
   assert.match(prompt, /「Kore」與「Puck」/);
@@ -39,6 +49,7 @@ test("generatePodcastScript posts to the auxiliary model with the api key header
   const script = await generatePodcastScript("key", "素材", "solo", { voice1: "Kore" }, { fetchImpl });
   assert.match(requestedUrl, new RegExp(`${AUXILIARY_MODEL}:generateContent$`));
   assert.equal(requestedOptions.headers["x-goog-api-key"], "key");
+  assert.equal(JSON.parse(requestedOptions.body).generationConfig.maxOutputTokens, 4096);
   assert.equal(script, "講稿內容");
 });
 
