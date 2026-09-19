@@ -38,6 +38,7 @@ test("production source contains only the approved models and no fallback provid
   const modelNames = [...source.matchAll(/gemini-[a-z0-9.-]+/gi)].map((match) => match[0]);
   assert.deepEqual([...new Set(modelNames)].sort(), [
     "gemini-2.5-flash",
+    "gemini-3.1-flash-tts-preview",
     "gemini-3.5-flash-lite",
     "gemini-3.8-live",
   ]);

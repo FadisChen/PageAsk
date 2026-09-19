@@ -5,6 +5,7 @@ const root = resolve(process.cwd());
 
 export default defineConfig({
   root,
+  base: "./",
   build: {
     outDir: resolve(root, "dist"),
     emptyOutDir: true,

@@ -39,6 +39,7 @@
       <div class="source-actions">
         <button class="button button-secondary" id="pickBlockButton" type="button">選取網頁區塊</button>
         <button class="button button-secondary" id="uploadButton" type="button">上傳檔案</button>
+        <button class="button button-secondary" id="podcastButton" type="button" disabled>產生 Podcast</button>
         <button class="button button-secondary" id="clearSourceButton" type="button" disabled>清空來源</button>
         <input id="fileInput" type="file" accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain,text/markdown,text/csv,application/json" hidden>
       </div>
@@ -118,6 +119,40 @@
       <a class="source-link is-hidden" id="sourceLink" target="_blank" rel="noreferrer">開啟原始網頁 ↗</a>
       <p class="source-warning is-hidden" id="sourceWarning"></p>
     </article>
+  </dialog>
+  <dialog class="settings-dialog podcast-dialog" id="podcastDialog" aria-labelledby="podcastDialogTitle">
+    <header class="dialog-header">
+      <div>
+        <p class="eyebrow">READING · PODCAST</p>
+        <h2 id="podcastDialogTitle">產生 Podcast</h2>
+      </div>
+      <button class="dialog-close" id="podcastCloseButton" type="button" aria-label="關閉 Podcast">×</button>
+    </header>
+    <div class="dialog-body">
+      <div class="dialog-field">
+        <label>講稿形式</label>
+        <div class="podcast-format-switch" role="radiogroup" aria-label="講稿形式">
+          <label><input type="radio" name="podcastFormat" id="podcastFormatSolo" value="solo" checked> 單人講述</label>
+          <label><input type="radio" name="podcastFormat" id="podcastFormatDuo" value="duo"> 雙人對談</label>
+        </div>
+      </div>
+      <div class="dialog-field">
+        <label for="podcastVoice1">聲線 1</label>
+        <select id="podcastVoice1"></select>
+      </div>
+      <div class="dialog-field" id="podcastVoice2Field">
+        <label for="podcastVoice2">聲線 2</label>
+        <select id="podcastVoice2"></select>
+      </div>
+      <div class="dialog-test-row">
+        <button class="button button-primary" id="podcastGenerateButton" type="button">產生 Podcast</button>
+        <span class="test-status" id="podcastStatus" role="status"></span>
+      </div>
+      <div class="podcast-result is-hidden" id="podcastResult">
+        <audio id="podcastAudioPlayer" controls></audio>
+        <a class="button button-secondary button-small" id="podcastDownloadLink" download="podcast.wav">下載音檔</a>
+      </div>
+    </div>
   </dialog>
   <dialog class="settings-dialog transcript-dialog" id="transcriptDialog" aria-labelledby="transcriptDialogTitle">
     <header class="dialog-header"><div><p class="eyebrow">LIVE · TRANSCRIPT</p><h2 id="transcriptDialogTitle">本場逐字稿</h2></div><button class="dialog-close" id="transcriptCloseButton" type="button" aria-label="關閉逐字稿">×</button></header>

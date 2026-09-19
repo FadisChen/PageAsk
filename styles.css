@@ -140,7 +140,7 @@ h1, h2, h3, p { margin-top: 0; }
 .source-warning { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #e1b7aa; color: var(--rust); font-size: 11px; }
 
 .source-actions, .call-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-.source-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.source-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .call-actions { grid-template-columns: 1.1fr 1fr 1fr .66fr; }
 .call-actions.is-text-only { grid-template-columns: 1.25fr 1fr .72fr; }
 #screenShareButton.is-sharing { background: var(--green); color: #fff; }
@@ -376,6 +376,12 @@ h1, h2, h3, p { margin-top: 0; }
 .test-status, #saveStatus { color: var(--muted); font-size: 12px; }
 .test-status.is-success, #saveStatus.is-success { color: var(--green); }
 .test-status.is-error, #saveStatus.is-error { color: var(--rust); }
+
+.podcast-format-switch { display: flex; gap: 16px; font-size: 12px; font-weight: 600; color: var(--ink); }
+.podcast-format-switch label { display: flex; flex: none; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
+.podcast-format-switch input { accent-color: var(--green); }
+.podcast-result { display: grid; gap: 10px; margin-top: 4px; }
+.podcast-result audio { width: 100%; }
 .privacy-note { margin: 24px 32px 0; padding: 17px 19px; border-left: 3px solid var(--gold); background: #f3e6c8; }
 .privacy-note strong { font: 700 17px var(--display); }
 .privacy-note p { margin: 5px 0 0; color: #625233; font-size: 12px; line-height: 1.65; }

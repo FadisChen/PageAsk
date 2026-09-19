@@ -8,6 +8,7 @@ PageAsk 是以 Chrome Manifest V3 Side Panel 為主要工作區的 Gemini Live �
 
 - 閱讀模式：使用網頁區塊、右鍵反白文字或本機檔案作為對談來源
 - 本機來源支援 PDF、TXT、Markdown、CSV 與 JSON；檔案先在瀏覽器內抽取文字
+- 閱讀模式可將目前來源一鍵產生單人或雙人 Podcast 音檔，沿用對談設定的 Gemini 聲線，並支援線上播放與下載
 - 陪伴模式：不需要來源即可開始對談
 - Gemini 3.8 Live 雙向語音、文字輸入、雙方字幕、VAD、插話、session resumption 與重連
 - Side panel 內可切換 VRM 或 AvatarTrueMan 真人 2D Avatar；兩者都支援表情、待機動作與 lip-sync，VRM 另支援骨骼手勢
@@ -52,6 +53,7 @@ flowchart LR
 - `js/screen-share.js`：getDisplayMedia 畫面擷取、縮圖與 JPEG 影格
 - `js/file-parser.js`：PDF.js 與文字檔解析
 - `js/history.js` / `js/memory.js`：歷史紀錄與陪伴記憶的清理、上限、匯出與整理
+- `js/podcast.js`：Podcast 講稿與語音生成、長講稿分段、PCM 合併與 WAV 封裝
 - `js/avatar/`：Three.js／VRM、真人 2D Canvas 載入、表情、手勢、狀態機與 lip-sync
 - `js/browser-tools.js`：瀏覽器工具宣告、權限清單、安全 URL 驗證與 mutation 分類
 
@@ -84,7 +86,8 @@ Live client 不直接呼叫 Chrome API。瀏覽器操作集中在 service worker
 | Extension | Chrome Manifest V3 | Chrome 120+ | Side Panel、service worker、optional permissions |
 | Live model | `gemini-3.8-live` | 固定 allowlist | 即時雙向語音與文字對談 |
 | Search model | `gemini-2.5-flash` | 固定設定 | Google Search grounding |
-| Auxiliary model | `gemini-3.5-flash-lite` | 固定設定 | YouTube 分析與記憶整理 |
+| Auxiliary model | `gemini-3.5-flash-lite` | 固定設定 | YouTube 分析、記憶整理與 Podcast 講稿生成 |
+| Podcast TTS model | `gemini-3.1-flash-tts-preview` | 固定設定 | 將 Podcast 講稿轉換為單人／雙人語音（WAV） |
 | 3D | Three.js | `^0.178.0` | WebGL 場景、動畫與音訊視覺化 |
 | VRM | `@pixiv/three-vrm` | `^3.4.0` | 載入與更新 VRM Avatar |
 | 真人 Avatar | Canvas 2D + 本機 PNG 圖層 | AvatarTrueMan manifest | 真人照片表情、嘴型、眨眼與呼吸動畫 |
@@ -175,6 +178,7 @@ PageAsk/
 │   ├── file-parser.js             # PDF、文字、JSON 來源解析
 │   ├── history.js                # 對談歷史建立、搜尋與匯出
 │   ├── memory.js                 # 記憶 token 預算與會後整理
+│   ├── podcast.js                # Podcast 講稿／語音生成、分段與 WAV 封裝
 │   ├── transcript.js              # 串流字幕合併與工具回覆過濾
 │   ├── traditional-chinese.js    # 簡體中文 STT 轉換
 │   ├── browser-tools.js          # 瀏覽器 tools 宣告與安全驗證
@@ -225,6 +229,7 @@ npm run build
 - Avatar tools 靜默執行、字幕工具資訊過濾
 - optional permissions、瀏覽器工具安全 URL 與 mutation confirmation
 - history、memory、settings migration、字幕串流合併與繁體中文轉換
+- Podcast 講稿 prompt、分段規則、TTS speechConfig 與 WAV 封裝
 - Vite build 後 manifest、entry points 與 web-accessible resources
 
 ## 常見問題

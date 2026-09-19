@@ -27,11 +27,11 @@
     "https://*/*"
   ],
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "dist/background.js",
     "type": "module"
   },
   "side_panel": {
-    "default_path": "sidepanel.html"
+    "default_path": "dist/sidepanel.html"
   },
   "action": {
     "default_title": "開啟 PageAsk",

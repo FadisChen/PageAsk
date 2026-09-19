@@ -14,6 +14,7 @@ export function getLiveModelOption(id) {
 
 export const GROUNDING_MODEL = "gemini-2.5-flash";
 export const AUXILIARY_MODEL = "gemini-3.5-flash-lite";
+export const PODCAST_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 
 export const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 export const WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";

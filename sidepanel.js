@@ -38,6 +38,7 @@ import {
   matchesHistorySearch,
 } from "./js/history.js";
 import { fitMemoriesToBudget, processCompanionMemory } from "./js/memory.js";
+import { generatePodcastAudio, generatePodcastScript } from "./js/podcast.js";
 import { ScreenShare } from "./js/screen-share.js";
 import { createActiveSource, estimateSourceTokens } from "./js/source.js";
 import {
@@ -113,6 +114,9 @@ const elements = Object.fromEntries([
   "settingsButton", "historyButton", "readingModeButton", "companionModeButton",
   "sourceSection", "sourceState", "sourceCard", "sourceKind", "sourceTitle", "sourcePreview",
   "sourceLink", "sourceWarning", "pickBlockButton", "uploadButton", "fileInput", "clearSourceButton",
+  "podcastButton", "podcastDialog", "podcastCloseButton", "podcastFormatSolo", "podcastFormatDuo",
+  "podcastVoice1", "podcastVoice2Field", "podcastVoice2", "podcastGenerateButton", "podcastStatus",
+  "podcastResult", "podcastAudioPlayer", "podcastDownloadLink",
   "conversationHeading", "connectionPill", "connectionText", "voiceStage", "levelBar", "avatarCanvas", "trueManAvatarCanvas", "avatarFallback",
   "enableBrowserToolsButton",
   "sourceDetailsButton", "sourceSummaryTitle", "sourceDialog", "sourceCloseButton",
@@ -173,12 +177,19 @@ renderAll();
 void initializeAvatar();
 void refreshBrowserToolPermission();
 
-for (const voice of VOICES) {
-  const option = document.createElement("option");
-  option.value = voice;
-  option.textContent = voice;
-  elements.settingsVoiceName.appendChild(option);
+function populateVoiceOptions(select) {
+  for (const voice of VOICES) {
+    const option = document.createElement("option");
+    option.value = voice;
+    option.textContent = voice;
+    select.appendChild(option);
+  }
 }
+
+populateVoiceOptions(elements.settingsVoiceName);
+populateVoiceOptions(elements.podcastVoice1);
+populateVoiceOptions(elements.podcastVoice2);
+let podcastAudioUrl = null;
 
 elements.settingsButton.addEventListener("click", openSettings);
 elements.historyButton.addEventListener("click", openHistory);
@@ -217,6 +228,12 @@ elements.pickBlockButton.addEventListener("click", startBlockPicker);
 elements.clearSourceButton.addEventListener("click", clearCurrentSource);
 elements.uploadButton.addEventListener("click", () => elements.fileInput.click());
 elements.fileInput.addEventListener("change", handleFileUpload);
+elements.podcastButton.addEventListener("click", openPodcastDialog);
+elements.podcastCloseButton.addEventListener("click", () => elements.podcastDialog.close());
+elements.podcastFormatSolo.addEventListener("change", renderPodcastFormat);
+elements.podcastFormatDuo.addEventListener("change", renderPodcastFormat);
+elements.podcastGenerateButton.addEventListener("click", generatePodcast);
+elements.podcastDialog.addEventListener("close", resetPodcastResult);
 elements.startButton.addEventListener("click", startSession);
 elements.muteButton.addEventListener("click", toggleMute);
 elements.screenShareButton.addEventListener("click", toggleScreenShare);
@@ -245,7 +262,7 @@ elements.transcript.addEventListener("scroll", () => {
   followTranscript = elements.transcript.scrollHeight - elements.transcript.clientHeight - elements.transcript.scrollTop < 32;
   elements.latestTranscriptButton.classList.toggle("is-hidden", followTranscript);
 });
-for (const dialog of [elements.sourceDialog, elements.transcriptDialog]) {
+for (const dialog of [elements.sourceDialog, elements.transcriptDialog, elements.podcastDialog]) {
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
 }
 elements.enableBrowserToolsButton.addEventListener("click", enableBrowserTools);
@@ -300,6 +317,77 @@ async function clearCurrentSource() {
     toast("已清空目前來源，可以重新選取網頁內容或上傳檔案。");
   } catch (error) {
     toast(`清空來源失敗：${error.message}`, true);
+  }
+}
+
+function openPodcastDialog() {
+  if (!state.source) return;
+  elements.podcastFormatSolo.checked = true;
+  elements.podcastFormatDuo.checked = false;
+  const defaultVoice = VOICES.includes(state.settings.voiceName) ? state.settings.voiceName : VOICES[0];
+  elements.podcastVoice1.value = defaultVoice;
+  elements.podcastVoice2.value = VOICES.find((voice) => voice !== defaultVoice) || VOICES[0];
+  resetPodcastResult();
+  renderPodcastFormat();
+  elements.podcastDialog.showModal();
+}
+
+function renderPodcastFormat() {
+  elements.podcastVoice2Field.classList.toggle("is-hidden", !elements.podcastFormatDuo.checked);
+}
+
+function resetPodcastResult() {
+  if (podcastAudioUrl) {
+    URL.revokeObjectURL(podcastAudioUrl);
+    podcastAudioUrl = null;
+  }
+  elements.podcastAudioPlayer.pause();
+  elements.podcastAudioPlayer.removeAttribute("src");
+  elements.podcastResult.classList.add("is-hidden");
+  elements.podcastStatus.textContent = "";
+  elements.podcastStatus.className = "test-status";
+}
+
+async function generatePodcast() {
+  if (!state.source) return toast("請先選取網頁內容或上傳檔案。", true);
+  if (!state.settings.apiKey) {
+    elements.podcastDialog.close();
+    toast("請先輸入 Gemini API key。", true);
+    await openSettings();
+    return;
+  }
+  const format = elements.podcastFormatDuo.checked ? "duo" : "solo";
+  const voice1 = elements.podcastVoice1.value;
+  const voice2 = elements.podcastVoice2.value;
+  if (format === "duo" && voice1 === voice2) {
+    return toast("雙人對談請選擇兩個不同的聲線。", true);
+  }
+
+  resetPodcastResult();
+  setBusy(elements.podcastGenerateButton, true, "產生中…");
+  elements.podcastStatus.textContent = "正在生成 Podcast 講稿…";
+
+  try {
+    const script = await generatePodcastScript(state.settings.apiKey, state.source.text, format, { voice1, voice2 });
+    const audioBlob = await generatePodcastAudio(state.settings.apiKey, script, format, voice1, voice2, {
+      onProgress: (done, total) => {
+        elements.podcastStatus.textContent = total > 1 ? `正在生成語音（${done}/${total} 段）…` : "正在生成語音…";
+      },
+    });
+    podcastAudioUrl = URL.createObjectURL(audioBlob);
+    elements.podcastAudioPlayer.src = podcastAudioUrl;
+    elements.podcastDownloadLink.href = podcastAudioUrl;
+    elements.podcastDownloadLink.download = `${(state.source.title || "podcast").slice(0, 60)}.wav`;
+    elements.podcastResult.classList.remove("is-hidden");
+    elements.podcastStatus.textContent = "完成！";
+    elements.podcastStatus.className = "test-status is-success";
+  } catch (error) {
+    const message = friendlyApiError(error);
+    elements.podcastStatus.textContent = message;
+    elements.podcastStatus.className = "test-status is-error";
+    toast(`Podcast 產生失敗：${message}`, true);
+  } finally {
+    setBusy(elements.podcastGenerateButton, false);
   }
 }
 
@@ -1435,6 +1523,7 @@ function renderControls() {
   elements.pickBlockButton.disabled = state.ending || state.memoryProcessing;
   elements.uploadButton.disabled = state.ending || state.memoryProcessing;
   elements.clearSourceButton.disabled = !state.source || state.ending || state.memoryProcessing;
+  elements.podcastButton.disabled = !state.source || state.ending || state.memoryProcessing;
   elements.startButton.disabled = controlsLocked || (requiresSource && !state.source);
   elements.textOnlyMode.disabled = controlsLocked;
   elements.settingsTrueManMode.disabled = controlsLocked || avatarSwitching;
