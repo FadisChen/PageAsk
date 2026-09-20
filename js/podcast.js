@@ -3,7 +3,7 @@ import { API_BASE, AUXILIARY_MODEL, PODCAST_TTS_MODEL } from "./constants.js";
 export const PODCAST_FORMATS = Object.freeze(["solo", "duo"]);
 // Kept for compatibility; prompt length is now selected from the source size.
 export const PODCAST_TARGET_WORDS = 420;
-export const PODCAST_SEGMENT_MAX_CHARS = 1000;
+export const PODCAST_SEGMENT_MAX_CHARS = 1400;
 const PODCAST_SAMPLE_RATE = 24000;
 
 function getPodcastLengthGuide(material) {
