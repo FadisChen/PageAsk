@@ -1,7 +1,7 @@
 {
   "version": 1,
   "canvas": { "width": 1163, "height": 1353 },
-  "base": "./assets/avatar-base-v5.png",
+  "base": "./assets/avatar-base-v5-alpha.webp",
   "regions": {
     "face": [250, 165, 670, 625],
     "emotion": [405, 305, 360, 175],
@@ -27,24 +27,31 @@
       "oh": [538, 567, 647, 649],
       "ou": [539, 573, 647, 636]
     },
+    "emotionMouth": {
+      "happy": { "inner": [513, 578, 672, 586], "outer": [508, 560, 675, 614] }
+    },
     "eyes": [
       { "region": [430, 372, 145, 90], "open": [453, 392, 555, 432], "closed": [453, 421, 555, 436] },
       { "region": [615, 372, 135, 90], "open": [640, 392, 728, 432], "closed": [640, 421, 728, 436] }
     ]
   },
   "visemes": {
-    "aa": "./assets/variants-v5/mouth-aa.png",
-    "ih": "./assets/variants-v5/mouth-ih.png",
-    "ou": "./assets/variants-v5/mouth-ou.png",
-    "ee": "./assets/variants-v5/mouth-ee.png",
-    "oh": "./assets/variants-v5/mouth-oh.png"
+    "aa": "./assets/variants-v5/mouth-aa.webp",
+    "ih": "./assets/variants-v5/mouth-ih.webp",
+    "ou": "./assets/variants-v5/mouth-ou.webp",
+    "ee": "./assets/variants-v5/mouth-ee.webp",
+    "oh": "./assets/variants-v5/mouth-oh.webp"
   },
-  "blink": "./assets/variants-v5/blink.png",
+  "blink": "./assets/variants-v5/blink.webp",
+  "gaze": {
+    "left-soft": "./assets/variants-v5/gaze-left-soft.webp",
+    "right-soft": "./assets/variants-v5/gaze-right-soft.webp"
+  },
   "emotions": {
     "neutral": null,
-    "happy": "./assets/variants-v5/emotion-happy.png",
-    "sad": "./assets/variants-v5/emotion-sad.png",
-    "angry": "./assets/variants-v5/emotion-angry.png",
-    "surprised": "./assets/variants-v5/emotion-surprised.png"
+    "happy": "./assets/variants-v5/emotion-happy.webp",
+    "sad": "./assets/variants-v5/emotion-sad.webp",
+    "angry": "./assets/variants-v5/emotion-angry.webp",
+    "surprised": "./assets/variants-v5/emotion-surprised.webp"
   }
 }

@@ -1,8 +1,51 @@
 const DEFAULT_STATE = "idle";
-const BLINK_CLOSE_SECONDS = 0.075;
-const BLINK_OPEN_SECONDS = 0.13;
 const EMOTION_CROSSFADE_SECONDS = 0.55;
 const VISEME_CROSSFADE_SECONDS = 0.06;
+const DOUBLE_BLINK_CHANCE = 0.15;
+const HALF_BLINK_CHANCE = 0.18;
+const BROW_LIFT_WEIGHT = 0.28;
+// The /o/ photo is strongly pouted; full rounding reads as suddenly swollen lips.
+const MAX_ROUNDING = 0.4;
+// The generated smile lifts the whole mouth ~11px; keep its width but only part
+// of that lift, which otherwise reads as the mouth sliding up the face.
+const EMOTION_MOUTH_LIFT = 0.4;
+const BLINK_INTERVALS = { idle: [2, 6], listening: [3, 7], thinking: [2.5, 6], speaking: [2, 5] };
+// Eyes jump between gaze photos with a hard cut, like a real saccade; any
+// partial blend of two photos with different gaze shows two irises.
+// Only small (~5°) sideways gaze photos are used: wider aversions and upward
+// looks read as staged on a single frontal photograph. Per state: how long the eyes rest on centre, how
+// long they stay away, and where they go.
+const GAZE_PATTERNS = {
+  idle: { center: [2.5, 6], away: [0.5, 1.2], targets: ["left-soft", "right-soft"] },
+  listening: { center: [3.5, 7], away: [0.3, 0.7], targets: ["left-soft", "right-soft"] },
+  speaking: { center: [2.5, 5.5], away: [0.4, 1], targets: ["left-soft", "right-soft"] },
+  thinking: { center: [0.4, 0.8], away: [1.4, 3], targets: ["left-soft", "right-soft"] },
+};
+
+// Head motion for a single frontal photograph: pixel nods and radian leans
+// around the chest pivot. Hand gestures fall back to a small nod and lean.
+const GESTURE_MOTIONS = {
+  nod: { duration: 1.3, motion: (t, env) => ({ nod: 4.5 * env * (0.5 - 0.5 * Math.cos(Math.PI * 4 * t)), lean: 0 }) },
+  listen_nod: { duration: 0.9, motion: (t, env) => ({ nod: 2.5 * env * env, lean: 0 }) },
+  shake_head: { duration: 1.4, motion: (t, env) => ({ nod: 0, lean: 0.007 * env * Math.sin(Math.PI * 6 * t) }) },
+  tilt_head: { duration: 1.8, motion: (t, env) => ({ nod: 0.8 * env, lean: 0.011 * Math.min(1, env * 1.6) }) },
+  bow: { duration: 1.9, motion: (t, env) => ({ nod: 8 * env, lean: 0 }) },
+};
+const DEFAULT_GESTURE_MOTION = { duration: 1.6, motion: (t, env) => ({ nod: 3 * env, lean: 0.004 * env }) };
+
+export function getGestureMotion(name, time) {
+  const { duration, motion } = GESTURE_MOTIONS[name] || DEFAULT_GESTURE_MOTION;
+  if (time < 0 || time >= duration) return { nod: 0, lean: 0, done: time >= duration };
+  const t = time / duration;
+  return { ...motion(t, Math.sin(Math.PI * t)), done: false };
+}
+
+// A short rise then exponential fall, like an eyebrow flash on a stressed syllable.
+export function getBrowLift(time) {
+  if (time < 0) return 0;
+  if (time < 0.08) return easeInOutSine(time / 0.08);
+  return Math.exp(-(time - 0.08) / 0.3);
+}
 
 export function easeInOutSine(value) {
   const progress = clamp(value, 0, 1);
@@ -30,7 +73,7 @@ export class TrueManAvatarController {
     this.callbacks = callbacks;
     this.context = canvas.getContext("2d", { alpha: true });
     this.manifest = null;
-    this.images = { base: null, blink: null, visemes: new Map(), emotions: new Map() };
+    this.images = { base: null, blink: null, visemes: new Map(), emotions: new Map(), gaze: new Map() };
     this.loaded = false;
     this.state = DEFAULT_STATE;
     this.emotion = "neutral";
@@ -48,9 +91,22 @@ export class TrueManAvatarController {
     this.blinkProgress = 0;
     this.blinkDirection = 0;
     this.blinkTimer = randomBetween(2, 6);
+    this.blinkDepth = 1;
+    this.blinkCloseSeconds = 0.075;
+    this.blinkOpenSeconds = 0.13;
+    this.pendingDoubleBlink = false;
     this.elapsed = 0;
     this.outputLevel = 0;
+    this.levelAverage = 0;
     this.speechPresence = 0;
+    this.thinkingPose = 0;
+    this.gesture = null;
+    this.nextListenNodAt = 0;
+    this.browStartedAt = -Infinity;
+    this.browCooldownUntil = 0;
+    this.grainPattern = null;
+    this.gaze = "center";
+    this.nextGazeAt = randomBetween(1, 3);
     this.reducedMotion = Boolean(globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
     this.resizeObserver = globalThis.ResizeObserver ? new ResizeObserver(() => this.resize()) : null;
     this.resizeObserver?.observe(canvas);
@@ -83,13 +139,15 @@ export class TrueManAvatarController {
         ["blink", manifest.blink],
         ...Object.entries(manifest.visemes || {}).map(([name, src]) => [`viseme:${name}`, src]),
         ...Object.entries(manifest.emotions || {}).filter(([name]) => name !== "neutral").map(([name, src]) => [`emotion:${name}`, src]),
+        ...Object.entries(manifest.gaze || {}).map(([name, src]) => [`gaze:${name}`, src]),
       ].filter(([, src]) => src);
       const variants = await Promise.all(variantEntries.map(async ([name, src]) => [name, await loadImage(resolveAsset(src))]));
       if (token !== this.loadToken) return false;
-      this.images.base = await removeCheckerboard(base);
+      this.images.base = base;
       this.images.blink = variants.find(([name]) => name === "blink")?.[1] || null;
       this.images.visemes = new Map(variants.filter(([name]) => name.startsWith("viseme:")).map(([name, image]) => [name.slice(7), image]));
       this.images.emotions = new Map(variants.filter(([name]) => name.startsWith("emotion:")).map(([name, image]) => [name.slice(8), image]));
+      this.images.gaze = new Map(variants.filter(([name]) => name.startsWith("gaze:")).map(([name, image]) => [name.slice(5), image]));
       this.loaded = true;
       this.resize();
       this.render();
@@ -102,7 +160,11 @@ export class TrueManAvatarController {
     }
   }
   setState(state) {
-    this.state = state || DEFAULT_STATE;
+    const next = state || DEFAULT_STATE;
+    if (next === this.state) return;
+    this.state = next;
+    if (next === "thinking") { this.triggerBlink(); this.nextGazeAt = this.elapsed + randomBetween(0.15, 0.4); }
+    if (next === "listening") this.nextListenNodAt = this.elapsed + randomBetween(2, 5);
   }
 
   setEmotion(emotion, { immediate = false } = {}) {
@@ -114,6 +176,9 @@ export class TrueManAvatarController {
     this.emotionHoldUntil = emotion === "neutral" ? 0 : this.elapsed + 3.5;
     this.emotionReleaseAt = null;
     if (emotion === this.emotion) return;
+    if (!immediate) this.triggerBlink();
+    // Emotion photos look at the viewer; blending them with averted eyes would ghost.
+    this.setGaze("center");
     this.emotionStartWeights = { ...this.emotionWeights };
     this.emotion = emotion;
     this.emotionMix = 0;
@@ -131,12 +196,24 @@ export class TrueManAvatarController {
     this.outputLevel = clamp(Number(rms) * 3.5, 0, 1);
   }
 
-  playGesture() {}
-  finishTurn() {}
+  playGesture(name) {
+    if (this.reducedMotion) return;
+    this.gesture = { name, time: 0 };
+  }
+
+  finishTurn() { this.triggerBlink(); }
   resetAnimation() { this.reset(); }
+
+  // Blinks cluster around cognitive events (turn start, new emotion, thinking).
+  triggerBlink() {
+    if (this.blinkDirection === 0) this.blinkTimer = Math.min(this.blinkTimer, randomBetween(0.03, 0.18));
+  }
 
   update(deltaTime, isSpeaking = false) {
     this.elapsed += deltaTime;
+    this.thinkingPose += ((this.state === "thinking" ? 1 : 0) - this.thinkingPose) * (1 - Math.exp(-deltaTime * 3));
+    if (!this.reducedMotion) this.updateHeadMotion(deltaTime, isSpeaking);
+    this.updateGaze(isSpeaking);
     if (this.emotionReleaseAt !== null) {
       if (isSpeaking) this.emotionReleaseAt = Math.max(this.emotionReleaseAt, this.elapsed + 1.8);
       else if (this.elapsed >= this.emotionReleaseAt) this.setEmotion("neutral", { immediate: true });
@@ -158,18 +235,64 @@ export class TrueManAvatarController {
     this.render();
   }
 
+  updateHeadMotion(deltaTime, isSpeaking) {
+    if (this.gesture) {
+      this.gesture.time += deltaTime;
+      if (getGestureMotion(this.gesture.name, this.gesture.time).done) this.gesture = null;
+    }
+    if (this.state === "listening" && !isSpeaking && !this.gesture && this.elapsed >= this.nextListenNodAt) {
+      this.gesture = { name: "listen_nod", time: 0 };
+      this.nextListenNodAt = this.elapsed + randomBetween(4, 9);
+    }
+    // Brow flash on emphasis: a level jump well above the recent speaking average.
+    const level = isSpeaking ? this.outputLevel : 0;
+    if (isSpeaking && level > 0.45 && level > this.levelAverage * 1.8 && this.elapsed >= this.browCooldownUntil) {
+      this.browStartedAt = this.elapsed;
+      this.browCooldownUntil = this.elapsed + randomBetween(4, 8);
+    }
+    this.levelAverage += (level - this.levelAverage) * (1 - Math.exp(-deltaTime * 1.5));
+  }
+
+  updateGaze(isSpeaking) {
+    if (this.reducedMotion || this.emotion !== "neutral" || this.emotionMix < 1) { this.setGaze("center"); return; }
+    if (this.elapsed < this.nextGazeAt || !this.images.gaze.size) return;
+    const pattern = GAZE_PATTERNS[isSpeaking ? "speaking" : this.state] || GAZE_PATTERNS.idle;
+    const targets = pattern.targets.filter((name) => this.images.gaze.has(name));
+    const goAway = this.gaze === "center" && targets.length;
+    this.setGaze(goAway ? targets[Math.floor(Math.random() * targets.length)] : "center");
+    const [min, max] = goAway ? pattern.away : pattern.center;
+    this.nextGazeAt = this.elapsed + randomBetween(min, max);
+  }
+
+  setGaze(gaze) {
+    this.gaze = gaze;
+  }
+
+  gazeImage(gaze) {
+    return this.images.gaze.get(gaze) || this.images.base;
+  }
+
   updateBlink(deltaTime) {
     this.blinkTimer -= deltaTime;
     if (this.blinkDirection === 0 && this.blinkTimer <= 0) {
       this.blinkDirection = 1;
-      this.blinkTimer = BLINK_CLOSE_SECONDS;
+      this.blinkCloseSeconds = randomBetween(0.06, 0.09);
+      this.blinkOpenSeconds = randomBetween(0.1, 0.17);
+      const isSecondBlink = this.pendingDoubleBlink;
+      this.pendingDoubleBlink = !isSecondBlink && Math.random() < DOUBLE_BLINK_CHANCE;
+      // Half blinks stay within the open-eye warp and never show the closed-lid texture.
+      this.blinkDepth = !isSecondBlink && !this.pendingDoubleBlink && Math.random() < HALF_BLINK_CHANCE ? randomBetween(0.45, 0.6) : 1;
     }
     if (this.blinkDirection === 1) {
-      this.blinkProgress = Math.min(1, this.blinkProgress + deltaTime / BLINK_CLOSE_SECONDS);
-      if (this.blinkProgress >= 1) { this.blinkDirection = -1; this.blinkTimer = BLINK_OPEN_SECONDS; }
+      this.blinkProgress = Math.min(1, this.blinkProgress + deltaTime / this.blinkCloseSeconds);
+      if (this.blinkProgress >= 1) this.blinkDirection = -1;
     } else if (this.blinkDirection === -1) {
-      this.blinkProgress = Math.max(0, this.blinkProgress - deltaTime / BLINK_OPEN_SECONDS);
-      if (this.blinkProgress <= 0) { this.blinkDirection = 0; this.blinkTimer = randomBetween(2, 6); }
+      this.blinkProgress = Math.max(0, this.blinkProgress - deltaTime / this.blinkOpenSeconds);
+      if (this.blinkProgress <= 0) {
+        this.blinkDirection = 0;
+        const [min, max] = BLINK_INTERVALS[this.state] || BLINK_INTERVALS.idle;
+        this.blinkTimer = this.pendingDoubleBlink ? randomBetween(0.12, 0.25) : randomBetween(min, max);
+      }
     }
   }
 
@@ -204,10 +327,11 @@ export class TrueManAvatarController {
     this.context.scale(scale, scale);
     // A shared shoulder-pivot transform moves the head, hair and every facial
     // patch together. Keep it small enough for a single frontal photograph.
+    const gesture = this.gesture ? getGestureMotion(this.gesture.name, this.gesture.time) : { lean: 0, nod: 0 };
     const presence = this.reducedMotion ? { lean: 0, nod: 0 } : {
       lean: Math.sin(this.elapsed * 0.47) * 0.004 + Math.sin(this.elapsed * 0.83) * 0.002 +
-        Math.sin(this.elapsed * 1.17) * this.speechPresence * 0.003,
-      nod: this.speechPresence * 3.5 * Math.sin(this.elapsed * 2.1) * Math.sin(this.elapsed * 0.63),
+        Math.sin(this.elapsed * 1.17) * this.speechPresence * 0.003 + this.thinkingPose * 0.005 + gesture.lean,
+      nod: this.speechPresence * 3.5 * Math.sin(this.elapsed * 2.1) * Math.sin(this.elapsed * 0.63) + gesture.nod,
     };
     const pivotY = this.manifest.rig?.breath?.chestY || designHeight * 0.74;
     this.context.translate(designWidth / 2, pivotY + presence.nod);
@@ -223,18 +347,44 @@ export class TrueManAvatarController {
 
     const emotionRegion = this.manifest.regions.emotion || this.manifest.regions.face;
     const expressions = Object.entries(this.emotionWeights).map(([name, weight]) => ({
-      image: name === "neutral" ? this.images.base : this.images.emotions.get(name), weight,
+      name, image: name === "neutral" ? this.images.base : this.images.emotions.get(name), weight,
     }));
-    if (emotionRegion) this.drawFeature(expressions, emotionRegion);
+    // The surprised photo looks at the viewer, so only flash brows on a centred gaze.
+    const browLift = this.reducedMotion || this.gaze !== "center" || !this.images.emotions.has("surprised") ? 0 :
+      getBrowLift(this.elapsed - this.browStartedAt) * BROW_LIFT_WEIGHT;
+    // Gaze photos only replace the neutral eyes; an emotion photo keeps its own eyes.
+    const eyeExpressions = expressions.map((entry) => ({
+      ...entry, image: entry.name === "neutral" ? this.gazeImage(this.gaze) : entry.image, weight: entry.weight * (1 - browLift),
+    }));
+    if (browLift > 0.005) eyeExpressions.push({ image: this.images.emotions.get("surprised"), weight: browLift });
+    if (emotionRegion) this.drawFeature(eyeExpressions, emotionRegion);
     const mouthRegion = this.manifest.regions.mouth;
     const rig = this.manifest.rig;
-    if (mouthRegion) {
-      if (rig?.mouth && this.mouthWeight > 0) {
-        const rest = rig.mouth.neutral;
+    if (mouthRegion && rig?.mouth) {
+      // Emotion mouths such as a wide smile sit elsewhere; morph lips between
+      // their anchors instead of dissolving, which would show two lip lines.
+      const mouthExpressions = expressions.map((entry) => ({
+        ...entry,
+        bounds: rig.emotionMouth?.[entry.name]?.inner || rig.mouth.neutral,
+        outer: rig.emotionMouth?.[entry.name]?.outer || rig.mouthOuter.neutral,
+      }));
+      const blendAnchors = (key, neutral) => neutral.map((base, index) =>
+        mouthExpressions.reduce((sum, entry) => {
+          const offset = entry[key][index] - base;
+          return sum + (base + (index % 2 === 1 ? offset * EMOTION_MOUTH_LIFT : offset)) * entry.weight;
+        }, 0));
+      const closedRest = blendAnchors("bounds", rig.mouth.neutral);
+      const closedOuter = blendAnchors("outer", rig.mouthOuter.neutral);
+      if (this.mouthWeight > 0) {
+        // Viseme photos were shot on the neutral face. Opening the mouth returns
+        // to the neutral anchors so a smile's width never stretches them.
+        const articulation = easeInOutSine(Math.min(1, this.mouthWeight / 0.045));
+        const rest = closedRest.map((value, index) => value + (rig.mouth.neutral[index] - value) * articulation);
+        const restOuter = closedOuter.map((value, index) => value + (rig.mouthOuter.neutral[index] - value) * articulation);
         // Use the open /o/ photo for rounded vowels; the /u/ photo itself is
         // strongly pursed. Distinguish /u/ with a smaller aperture, not thicker lips.
         const relaxedWeights = {};
-        const roundAmount = easeInOutSine(clamp((this.mouthWeight - 0.05) / 0.12, 0, 1));
+        const roundAmount = easeInOutSine(clamp((this.mouthWeight - 0.05) / 0.12, 0, 1)) * MAX_ROUNDING;
         const roundO = (this.visemeWeights.oh || 0) * roundAmount;
         const roundU = (this.visemeWeights.ou || 0) * roundAmount;
         for (const [name, weight] of Object.entries(this.visemeWeights)) {
@@ -249,8 +399,8 @@ export class TrueManAvatarController {
         const full = rest.map((_, index) => sources.reduce((sum, [name, weight]) => sum + rig.mouth[name][index] * weight, 0));
         // Audio level is not a geometric percentage: quiet speech still needs a
         // readable jaw opening. Lip thickness/rounding stay independently bounded.
-        const opening = Math.min(Math.sqrt(this.mouthWeight) * 1.15, 0.68);
-        const articulation = easeInOutSine(Math.min(1, this.mouthWeight / 0.045));
+        // Conversational speech rarely opens fully; most syllables stay mid-open.
+        const opening = Math.min(Math.sqrt(this.mouthWeight) * 0.85, 0.5);
         const centerX = (rest[0] + rest[2]) / 2;
         const target = rest.map((value, index) => index % 2 === 0 ?
           centerX + (value - centerX) *  MOUTH_WIDTH_SCALE *(1 - roundO * 0.32 - roundU * 0.44) :
@@ -259,7 +409,6 @@ export class TrueManAvatarController {
         const nativeGap = target[3] - target[1];
         target[3] = target[1] + nativeGap * (1 - roundO - roundU) +
           (4 + opening * 42) * roundO + (4 + opening * 30) * roundU;
-        const restOuter = rig.mouthOuter.neutral;
         const targetOuter = [
           centerX + (restOuter[0] - centerX) *  MOUTH_WIDTH_SCALE * (1 - roundO * 0.14 - roundU * 0.2),
           target[1] - (rest[1] - restOuter[1]) * (1 - 0.12 * articulation),
@@ -270,23 +419,38 @@ export class TrueManAvatarController {
         // never the opacity of an open mouth laid over the closed base photograph.
         const textureMix = articulation;
         this.drawFeature([
-          ...expressions.map((entry) => ({ ...entry, weight: entry.weight * (1 - textureMix), bounds: rest, outer: restOuter })),
+          ...mouthExpressions.map((entry) => ({ ...entry, weight: entry.weight * (1 - textureMix) })),
           ...sources.map(([name, weight]) => ({ image: this.images.visemes.get(name), weight: weight * textureMix, bounds: rig.mouth[name], outer: rig.mouthOuter[name] })),
         ], mouthRegion, target, targetOuter);
-      } else this.drawFeature(expressions, mouthRegion);
-    }
+      } else this.drawFeature(mouthExpressions, mouthRegion, closedRest, closedOuter);
+    } else if (mouthRegion) this.drawFeature(expressions, mouthRegion);
     if (rig?.eyes && this.images.blink && this.blinkProgress > 0) {
-      const closure = easeInOutSine(this.blinkProgress);
+      const closure = easeInOutSine(this.blinkProgress) * this.blinkDepth;
       for (const eye of rig.eyes) {
         const target = eye.open.map((value, index) => value + (eye.closed[index] - value) * closure);
         // Keep the iris opaque while the lid moves, then reveal the closed-lid texture.
         const closedMix = easeInOutSine(clamp((closure - 0.65) / 0.35, 0, 1));
         this.drawFeature([
-          ...expressions.map((entry) => ({ ...entry, weight: entry.weight * (1 - closedMix), bounds: eye.open })),
+          ...eyeExpressions.map((entry) => ({ ...entry, weight: entry.weight * (1 - closedMix), bounds: eye.open })),
           { image: this.images.blink, weight: closedMix, bounds: eye.closed },
         ], eye.region, target);
       }
     }
+    this.context.restore();
+    this.drawGrain();
+  }
+
+  // Balanced light/dark grain on the portrait only unifies the photo and the
+  // composited patches, and hides their feathered edges.
+  drawGrain() {
+    this.grainPattern ||= createGrainPattern(this.context);
+    if (!this.grainPattern) return;
+    // Static grain: re-randomising it per frame shimmers like TV static at the
+    // side panel's low idle frame rate.
+    this.context.save();
+    this.context.globalCompositeOperation = "source-atop";
+    this.context.fillStyle = this.grainPattern;
+    this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.restore();
   }
 
@@ -335,8 +499,13 @@ export class TrueManAvatarController {
     this.blinkProgress = 0;
     this.blinkDirection = 0;
     this.blinkTimer = randomBetween(2, 6);
+    this.blinkDepth = 1;
+    this.pendingDoubleBlink = false;
     this.outputLevel = 0;
+    this.levelAverage = 0;
     this.speechPresence = 0;
+    this.gesture = null;
+    this.browStartedAt = -Infinity;
     this.render();
   }
 
@@ -344,7 +513,7 @@ export class TrueManAvatarController {
     this.loadToken = (this.loadToken || 0) + 1;
     this.resizeObserver?.disconnect();
     this.motionMedia?.removeEventListener?.("change", this.motionListener);
-    this.images = { base: null, blink: null, visemes: new Map(), emotions: new Map() };
+    this.images = { base: null, blink: null, visemes: new Map(), emotions: new Map(), gaze: new Map() };
     this.patchCache?.clear();
     this.loaded = false;
     this.context?.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -365,6 +534,22 @@ function createCanvas(width, height) {
   canvas.width = width;
   canvas.height = height;
   return canvas;
+}
+
+function createGrainPattern(context) {
+  const size = 128;
+  const tile = createCanvas(size, size);
+  const tileContext = tile.getContext("2d");
+  const pixels = tileContext.createImageData(size, size);
+  for (let index = 0; index < pixels.data.length; index += 4) {
+    const value = Math.random() < 0.5 ? 0 : 255;
+    pixels.data[index] = value;
+    pixels.data[index + 1] = value;
+    pixels.data[index + 2] = value;
+    pixels.data[index + 3] = Math.round(Math.random() * 12);
+  }
+  tileContext.putImageData(pixels, 0, 0);
+  return context.createPattern(tile, "repeat");
 }
 
 // Separate inner/outer lip anchors preserve lip thickness while closing the jaw.
@@ -389,43 +574,6 @@ async function loadImage(src) {
   if (image.decode) await image.decode();
   else await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; });
   return image;
-}
-
-async function removeCheckerboard(image) {
-  const canvas = globalThis.OffscreenCanvas ? new OffscreenCanvas(image.naturalWidth || image.width, image.naturalHeight || image.height) : document.createElement("canvas");
-  canvas.width = image.naturalWidth || image.width;
-  canvas.height = image.naturalHeight || image.height;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  context.drawImage(image, 0, 0);
-  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-  const { data, width, height } = imageData;
-  const background = new Uint8Array(width * height);
-  const queue = [];
-  const trySeed = (index) => {
-    if (!background[index] && isCheckerPixel(data, index)) { background[index] = 1; queue.push(index); }
-  };
-  for (let x = 0; x < width; x += 1) { trySeed(x); trySeed((height - 1) * width + x); }
-  for (let y = 0; y < height; y += 1) { trySeed(y * width); trySeed(y * width + width - 1); }
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const index = queue[cursor];
-    const x = index % width;
-    const neighbors = [index - 1, index + 1, index - width, index + width];
-    for (const next of neighbors) {
-      if (next < 0 || next >= width * height || (next % width === width - 1 && x === 0) || (next % width === 0 && x === width - 1) || background[next]) continue;
-      if (isCheckerPixel(data, next)) { background[next] = 1; queue.push(next); }
-    }
-  }
-  for (let index = 0; index < background.length; index += 1) if (background[index]) data[index * 4 + 3] = 0;
-  context.putImageData(imageData, 0, 0);
-  return canvas;
-}
-
-function isCheckerPixel(data, index) {
-  const offset = index * 4;
-  const r = data[offset];
-  const g = data[offset + 1];
-  const b = data[offset + 2];
-  return Math.max(r, g, b) - Math.min(r, g, b) <= 14 && Math.min(r, g, b) >= 150;
 }
 
 function clamp(value, min, max) {

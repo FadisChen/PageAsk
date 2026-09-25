@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <title>真人 Avatar 驗證頁</title>
+  <style>
+    body { margin: 0; font: 14px system-ui, sans-serif; background: #f3efe9; color: #222; display: flex; gap: 16px; padding: 16px; }
+    body.dark { background: #1b1d22; color: #eee; }
+    canvas { width: 420px; height: 500px; display: block; }
+    .controls { display: grid; gap: 8px; align-content: start; }
+  </style>
+</head>
+<body>
+  <canvas id="avatar"></canvas>
+  <div class="controls">
+    <label>狀態 <select id="state"><option>idle</option><option>listening</option><option>thinking</option><option>speaking</option></select></label>
+    <label>表情 <select id="emotion"><option>neutral</option><option>happy</option><option>sad</option><option>angry</option><option>surprised</option></select></label>
+    <label>手勢 <select id="gesture"><option>nod</option><option>shake_head</option><option>tilt_head</option><option>bow</option><option>shrug</option><option>wave</option></select></label>
+    <button id="playGesture">播放手勢</button>
+    <label><input id="speak" type="checkbox"> 模擬說話</label>
+    <label><input id="dark" type="checkbox"> 深色背景</label>
+    <output id="info"></output>
+  </div>
+  <script type="module">
+    // Local-only harness: serve the repo root and open /tools/true-man-harness.html.
+    import { TrueManAvatarController } from "../js/avatar/true-man-avatar-controller.js";
+
+    const $ = (id) => document.getElementById(id);
+    const avatar = new TrueManAvatarController($("avatar"), { onError: (error) => { $("info").textContent = error.message; } });
+    await avatar.load(new URL("../avatars/true-man/avatar-manifest.json", location.href).href);
+    const visemes = ["aa", "ih", "ee", "oh", "ou"];
+    const speech = { syllableAt: 0, viseme: "aa", peak: 0.5 };
+    let paused = false;
+    let last = performance.now();
+
+    // Deterministic stepping for screenshots: pause the RAF loop, then advance.
+    window.avatar = avatar;
+    window.harness = {
+      pause() { paused = true; },
+      resume() { paused = false; last = performance.now(); },
+      step(seconds, frames = 1) { for (let i = 0; i < frames; i += 1) tick(seconds / frames); },
+      // Returns a JPEG data URL of a manifest-space region of the rendered canvas.
+      grab(region, scale = 1) {
+        const canvas = $("avatar");
+        const design = avatar.manifest.canvas;
+        const fit = Math.min(canvas.width / design.width, canvas.height / design.height);
+        const originX = (canvas.width - design.width * fit) / 2;
+        const originY = (canvas.height - design.height * fit) / 2;
+        const shot = document.createElement("canvas");
+        shot.width = region[2] * fit * scale;
+        shot.height = region[3] * fit * scale;
+        const context = shot.getContext("2d");
+        context.fillStyle = getComputedStyle(document.body).backgroundColor;
+        context.fillRect(0, 0, shot.width, shot.height);
+        context.drawImage(canvas, originX + region[0] * fit, originY + region[1] * fit, region[2] * fit, region[3] * fit, 0, 0, shot.width, shot.height);
+        return shot.toDataURL("image/jpeg", 0.92);
+      },
+    };
+
+    function syntheticMouth(time) {
+      if (!$("speak").checked) return { viseme: "none", weight: 0, rms: 0 };
+      if (time >= speech.syllableAt) {
+        speech.syllableAt = time + 0.14 + Math.random() * 0.12;
+        speech.viseme = visemes[Math.floor(Math.random() * visemes.length)];
+        speech.peak = Math.random() < 0.12 ? 0.95 : 0.35 + Math.random() * 0.3;
+        speech.startedAt = time;
+      }
+      const t = (time - speech.startedAt) / (speech.syllableAt - speech.startedAt);
+      const weight = speech.peak * Math.sin(Math.PI * Math.min(1, t));
+      return { viseme: weight > 0.02 ? speech.viseme : "none", weight, rms: weight * 0.2 };
+    }
+
+    function tick(delta) {
+      const speaking = $("speak").checked;
+      const mouth = syntheticMouth(avatar.elapsed + delta);
+      avatar.setViseme(mouth.viseme, mouth.weight, mouth.rms);
+      avatar.setState(speaking ? "speaking" : $("state").value);
+      avatar.update(delta, speaking);
+    }
+
+    function frame(now) {
+      const delta = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      if (!paused) tick(delta);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    $("emotion").addEventListener("change", () => avatar.setEmotion($("emotion").value));
+    $("playGesture").addEventListener("click", () => avatar.playGesture($("gesture").value));
+    $("dark").addEventListener("change", () => document.body.classList.toggle("dark", $("dark").checked));
+  </script>
+</body>
+</html>
