@@ -124,7 +124,7 @@ export class TrueManAvatarController {
       ].filter(([, src]) => src);
       const variants = await Promise.all(variantEntries.map(async ([name, src]) => [name, await loadImage(resolveAsset(src))]));
       if (token !== this.loadToken) return false;
-      this.images.base = await removeCheckerboard(base);
+      this.images.base = base;
       this.images.blink = variants.find(([name]) => name === "blink")?.[1] || null;
       this.images.visemes = new Map(variants.filter(([name]) => name.startsWith("viseme:")).map(([name, image]) => [name.slice(7), image]));
       this.images.emotions = new Map(variants.filter(([name]) => name.startsWith("emotion:")).map(([name, image]) => [name.slice(8), image]));
@@ -513,43 +513,6 @@ async function loadImage(src) {
   if (image.decode) await image.decode();
   else await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; });
   return image;
-}
-
-async function removeCheckerboard(image) {
-  const canvas = globalThis.OffscreenCanvas ? new OffscreenCanvas(image.naturalWidth || image.width, image.naturalHeight || image.height) : document.createElement("canvas");
-  canvas.width = image.naturalWidth || image.width;
-  canvas.height = image.naturalHeight || image.height;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  context.drawImage(image, 0, 0);
-  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-  const { data, width, height } = imageData;
-  const background = new Uint8Array(width * height);
-  const queue = [];
-  const trySeed = (index) => {
-    if (!background[index] && isCheckerPixel(data, index)) { background[index] = 1; queue.push(index); }
-  };
-  for (let x = 0; x < width; x += 1) { trySeed(x); trySeed((height - 1) * width + x); }
-  for (let y = 0; y < height; y += 1) { trySeed(y * width); trySeed(y * width + width - 1); }
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const index = queue[cursor];
-    const x = index % width;
-    const neighbors = [index - 1, index + 1, index - width, index + width];
-    for (const next of neighbors) {
-      if (next < 0 || next >= width * height || (next % width === width - 1 && x === 0) || (next % width === 0 && x === width - 1) || background[next]) continue;
-      if (isCheckerPixel(data, next)) { background[next] = 1; queue.push(next); }
-    }
-  }
-  for (let index = 0; index < background.length; index += 1) if (background[index]) data[index * 4 + 3] = 0;
-  context.putImageData(imageData, 0, 0);
-  return canvas;
-}
-
-function isCheckerPixel(data, index) {
-  const offset = index * 4;
-  const r = data[offset];
-  const g = data[offset + 1];
-  const b = data[offset + 2];
-  return Math.max(r, g, b) - Math.min(r, g, b) <= 14 && Math.min(r, g, b) >= 150;
 }
 
 function clamp(value, min, max) {

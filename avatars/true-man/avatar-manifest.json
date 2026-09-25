@@ -1,7 +1,7 @@
 {
   "version": 1,
   "canvas": { "width": 1163, "height": 1353 },
-  "base": "./assets/avatar-base-v5.png",
+  "base": "./assets/avatar-base-v5-alpha.png",
   "regions": {
     "face": [250, 165, 670, 625],
     "emotion": [405, 305, 360, 175],
