@@ -4,16 +4,22 @@ const VISEME_CROSSFADE_SECONDS = 0.06;
 const DOUBLE_BLINK_CHANCE = 0.15;
 const HALF_BLINK_CHANCE = 0.18;
 const BROW_LIFT_WEIGHT = 0.28;
+// The /o/ photo is strongly pouted; full rounding reads as suddenly swollen lips.
+const MAX_ROUNDING = 0.4;
+// The generated smile lifts the whole mouth ~11px; keep its width but only part
+// of that lift, which otherwise reads as the mouth sliding up the face.
+const EMOTION_MOUTH_LIFT = 0.4;
 const BLINK_INTERVALS = { idle: [2, 6], listening: [3, 7], thinking: [2.5, 6], speaking: [2, 5] };
 // Eyes jump between gaze photos with a hard cut, like a real saccade; any
 // partial blend of two photos with different gaze shows two irises.
-const STRONG_GAZES = new Set(["left", "right", "up"]);
-// Per state: how long the eyes rest on centre, how long they stay away, and where they go.
+// Only small (~5°) gaze photos are used: wider aversions look staged on a
+// single frontal photograph. Per state: how long the eyes rest on centre, how
+// long they stay away, and where they go.
 const GAZE_PATTERNS = {
-  idle: { center: [1.5, 4], away: [0.5, 1.4], targets: ["left-soft", "right-soft", "left-soft", "right-soft", "left", "right"] },
-  listening: { center: [2.5, 5.5], away: [0.3, 0.8], targets: ["left-soft", "right-soft"] },
-  speaking: { center: [1.2, 3.2], away: [0.4, 1.2], targets: ["left-soft", "right-soft", "left-soft", "right-soft", "left", "right", "up"] },
-  thinking: { center: [0.3, 0.7], away: [1.4, 3], targets: ["up", "left", "right", "up"] },
+  idle: { center: [2.5, 6], away: [0.5, 1.2], targets: ["left-soft", "right-soft"] },
+  listening: { center: [3.5, 7], away: [0.3, 0.7], targets: ["left-soft", "right-soft"] },
+  speaking: { center: [2.5, 5.5], away: [0.4, 1], targets: ["left-soft", "right-soft", "up-soft"] },
+  thinking: { center: [0.4, 0.8], away: [1.4, 3], targets: ["up-soft", "left-soft", "right-soft", "up-soft"] },
 };
 
 // Head motion for a single frontal photograph: pixel nods and radian leans
@@ -240,9 +246,9 @@ export class TrueManAvatarController {
     }
     // Brow flash on emphasis: a level jump well above the recent speaking average.
     const level = isSpeaking ? this.outputLevel : 0;
-    if (isSpeaking && level > 0.3 && level > this.levelAverage * 1.5 && this.elapsed >= this.browCooldownUntil) {
+    if (isSpeaking && level > 0.45 && level > this.levelAverage * 1.8 && this.elapsed >= this.browCooldownUntil) {
       this.browStartedAt = this.elapsed;
-      this.browCooldownUntil = this.elapsed + randomBetween(0.9, 1.8);
+      this.browCooldownUntil = this.elapsed + randomBetween(4, 8);
     }
     this.levelAverage += (level - this.levelAverage) * (1 - Math.exp(-deltaTime * 1.5));
   }
@@ -259,9 +265,6 @@ export class TrueManAvatarController {
   }
 
   setGaze(gaze) {
-    if (gaze === this.gaze) return;
-    // Large saccades are often accompanied by a blink.
-    if ((STRONG_GAZES.has(gaze) || STRONG_GAZES.has(this.gaze)) && Math.random() < 0.4) this.triggerBlink();
     this.gaze = gaze;
   }
 
@@ -365,15 +368,23 @@ export class TrueManAvatarController {
         bounds: rig.emotionMouth?.[entry.name]?.inner || rig.mouth.neutral,
         outer: rig.emotionMouth?.[entry.name]?.outer || rig.mouthOuter.neutral,
       }));
-      const blendAnchors = (key) => rig.mouth.neutral.map((_, index) =>
-        mouthExpressions.reduce((sum, entry) => sum + entry[key][index] * entry.weight, 0));
-      const rest = blendAnchors("bounds");
-      const restOuter = blendAnchors("outer");
+      const blendAnchors = (key, neutral) => neutral.map((base, index) =>
+        mouthExpressions.reduce((sum, entry) => {
+          const offset = entry[key][index] - base;
+          return sum + (base + (index % 2 === 1 ? offset * EMOTION_MOUTH_LIFT : offset)) * entry.weight;
+        }, 0));
+      const closedRest = blendAnchors("bounds", rig.mouth.neutral);
+      const closedOuter = blendAnchors("outer", rig.mouthOuter.neutral);
       if (this.mouthWeight > 0) {
+        // Viseme photos were shot on the neutral face. Opening the mouth returns
+        // to the neutral anchors so a smile's width never stretches them.
+        const articulation = easeInOutSine(Math.min(1, this.mouthWeight / 0.045));
+        const rest = closedRest.map((value, index) => value + (rig.mouth.neutral[index] - value) * articulation);
+        const restOuter = closedOuter.map((value, index) => value + (rig.mouthOuter.neutral[index] - value) * articulation);
         // Use the open /o/ photo for rounded vowels; the /u/ photo itself is
         // strongly pursed. Distinguish /u/ with a smaller aperture, not thicker lips.
         const relaxedWeights = {};
-        const roundAmount = easeInOutSine(clamp((this.mouthWeight - 0.05) / 0.12, 0, 1));
+        const roundAmount = easeInOutSine(clamp((this.mouthWeight - 0.05) / 0.12, 0, 1)) * MAX_ROUNDING;
         const roundO = (this.visemeWeights.oh || 0) * roundAmount;
         const roundU = (this.visemeWeights.ou || 0) * roundAmount;
         for (const [name, weight] of Object.entries(this.visemeWeights)) {
@@ -388,8 +399,8 @@ export class TrueManAvatarController {
         const full = rest.map((_, index) => sources.reduce((sum, [name, weight]) => sum + rig.mouth[name][index] * weight, 0));
         // Audio level is not a geometric percentage: quiet speech still needs a
         // readable jaw opening. Lip thickness/rounding stay independently bounded.
-        const opening = Math.min(Math.sqrt(this.mouthWeight) * 1.15, 0.68);
-        const articulation = easeInOutSine(Math.min(1, this.mouthWeight / 0.045));
+        // Conversational speech rarely opens fully; most syllables stay mid-open.
+        const opening = Math.min(Math.sqrt(this.mouthWeight) * 0.85, 0.5);
         const centerX = (rest[0] + rest[2]) / 2;
         const target = rest.map((value, index) => index % 2 === 0 ?
           centerX + (value - centerX) *  MOUTH_WIDTH_SCALE *(1 - roundO * 0.32 - roundU * 0.44) :
@@ -411,7 +422,7 @@ export class TrueManAvatarController {
           ...mouthExpressions.map((entry) => ({ ...entry, weight: entry.weight * (1 - textureMix) })),
           ...sources.map(([name, weight]) => ({ image: this.images.visemes.get(name), weight: weight * textureMix, bounds: rig.mouth[name], outer: rig.mouthOuter[name] })),
         ], mouthRegion, target, targetOuter);
-      } else this.drawFeature(mouthExpressions, mouthRegion, rest, restOuter);
+      } else this.drawFeature(mouthExpressions, mouthRegion, closedRest, closedOuter);
     } else if (mouthRegion) this.drawFeature(expressions, mouthRegion);
     if (rig?.eyes && this.images.blink && this.blinkProgress > 0) {
       const closure = easeInOutSine(this.blinkProgress) * this.blinkDepth;
@@ -434,12 +445,12 @@ export class TrueManAvatarController {
   drawGrain() {
     this.grainPattern ||= createGrainPattern(this.context);
     if (!this.grainPattern) return;
-    const offset = this.reducedMotion ? 0 : Math.floor(Math.random() * 128);
+    // Static grain: re-randomising it per frame shimmers like TV static at the
+    // side panel's low idle frame rate.
     this.context.save();
     this.context.globalCompositeOperation = "source-atop";
-    this.context.translate(offset, offset * 0.61);
     this.context.fillStyle = this.grainPattern;
-    this.context.fillRect(-offset, -offset, this.canvas.width + 128, this.canvas.height + 128);
+    this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.restore();
   }
 

@@ -190,7 +190,7 @@ test("真人 Avatar assets are local and use only the required variants", async 
   for (const relativePath of required) {
     await readFile(path.resolve(root, "avatars", "true-man", relativePath.replace(/^\.\//, "")));
   }
-  assert.deepEqual(Object.keys(manifest.gaze).sort(), ["left", "left-soft", "right", "right-soft", "up"]);
+  assert.deepEqual(Object.keys(manifest.gaze).sort(), ["left-soft", "right-soft", "up-soft"]);
 });
 
 test("screen sharing uses the Chrome picker and stops with the session", async () => {
