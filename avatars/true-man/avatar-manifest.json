@@ -27,6 +27,9 @@
       "oh": [538, 567, 647, 649],
       "ou": [539, 573, 647, 636]
     },
+    "emotionMouth": {
+      "happy": { "inner": [513, 578, 672, 586], "outer": [508, 560, 675, 614] }
+    },
     "eyes": [
       { "region": [430, 372, 145, 90], "open": [453, 392, 555, 432], "closed": [453, 421, 555, 436] },
       { "region": [615, 372, 135, 90], "open": [640, 392, 728, 432], "closed": [640, 421, 728, 436] }
@@ -40,6 +43,13 @@
     "oh": "./assets/variants-v5/mouth-oh.png"
   },
   "blink": "./assets/variants-v5/blink.png",
+  "gaze": {
+    "left-soft": "./assets/variants-v5/gaze-left-soft.webp",
+    "right-soft": "./assets/variants-v5/gaze-right-soft.webp",
+    "left": "./assets/variants-v5/gaze-left.webp",
+    "right": "./assets/variants-v5/gaze-right.webp",
+    "up": "./assets/variants-v5/gaze-up.webp"
+  },
   "emotions": {
     "neutral": null,
     "happy": "./assets/variants-v5/emotion-happy.png",

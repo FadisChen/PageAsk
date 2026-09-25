@@ -5,6 +5,16 @@ const DOUBLE_BLINK_CHANCE = 0.15;
 const HALF_BLINK_CHANCE = 0.18;
 const BROW_LIFT_WEIGHT = 0.28;
 const BLINK_INTERVALS = { idle: [2, 6], listening: [3, 7], thinking: [2.5, 6], speaking: [2, 5] };
+// Eyes jump between gaze photos with a hard cut, like a real saccade; any
+// partial blend of two photos with different gaze shows two irises.
+const STRONG_GAZES = new Set(["left", "right", "up"]);
+// Per state: how long the eyes rest on centre, how long they stay away, and where they go.
+const GAZE_PATTERNS = {
+  idle: { center: [1.5, 4], away: [0.5, 1.4], targets: ["left-soft", "right-soft", "left-soft", "right-soft", "left", "right"] },
+  listening: { center: [2.5, 5.5], away: [0.3, 0.8], targets: ["left-soft", "right-soft"] },
+  speaking: { center: [1.2, 3.2], away: [0.4, 1.2], targets: ["left-soft", "right-soft", "left-soft", "right-soft", "left", "right", "up"] },
+  thinking: { center: [0.3, 0.7], away: [1.4, 3], targets: ["up", "left", "right", "up"] },
+};
 
 // Head motion for a single frontal photograph: pixel nods and radian leans
 // around the chest pivot. Hand gestures fall back to a small nod and lean.
@@ -57,7 +67,7 @@ export class TrueManAvatarController {
     this.callbacks = callbacks;
     this.context = canvas.getContext("2d", { alpha: true });
     this.manifest = null;
-    this.images = { base: null, blink: null, visemes: new Map(), emotions: new Map() };
+    this.images = { base: null, blink: null, visemes: new Map(), emotions: new Map(), gaze: new Map() };
     this.loaded = false;
     this.state = DEFAULT_STATE;
     this.emotion = "neutral";
@@ -89,6 +99,8 @@ export class TrueManAvatarController {
     this.browStartedAt = -Infinity;
     this.browCooldownUntil = 0;
     this.grainPattern = null;
+    this.gaze = "center";
+    this.nextGazeAt = randomBetween(1, 3);
     this.reducedMotion = Boolean(globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
     this.resizeObserver = globalThis.ResizeObserver ? new ResizeObserver(() => this.resize()) : null;
     this.resizeObserver?.observe(canvas);
@@ -121,6 +133,7 @@ export class TrueManAvatarController {
         ["blink", manifest.blink],
         ...Object.entries(manifest.visemes || {}).map(([name, src]) => [`viseme:${name}`, src]),
         ...Object.entries(manifest.emotions || {}).filter(([name]) => name !== "neutral").map(([name, src]) => [`emotion:${name}`, src]),
+        ...Object.entries(manifest.gaze || {}).map(([name, src]) => [`gaze:${name}`, src]),
       ].filter(([, src]) => src);
       const variants = await Promise.all(variantEntries.map(async ([name, src]) => [name, await loadImage(resolveAsset(src))]));
       if (token !== this.loadToken) return false;
@@ -128,6 +141,7 @@ export class TrueManAvatarController {
       this.images.blink = variants.find(([name]) => name === "blink")?.[1] || null;
       this.images.visemes = new Map(variants.filter(([name]) => name.startsWith("viseme:")).map(([name, image]) => [name.slice(7), image]));
       this.images.emotions = new Map(variants.filter(([name]) => name.startsWith("emotion:")).map(([name, image]) => [name.slice(8), image]));
+      this.images.gaze = new Map(variants.filter(([name]) => name.startsWith("gaze:")).map(([name, image]) => [name.slice(5), image]));
       this.loaded = true;
       this.resize();
       this.render();
@@ -143,7 +157,7 @@ export class TrueManAvatarController {
     const next = state || DEFAULT_STATE;
     if (next === this.state) return;
     this.state = next;
-    if (next === "thinking") this.triggerBlink();
+    if (next === "thinking") { this.triggerBlink(); this.nextGazeAt = this.elapsed + randomBetween(0.15, 0.4); }
     if (next === "listening") this.nextListenNodAt = this.elapsed + randomBetween(2, 5);
   }
 
@@ -157,6 +171,8 @@ export class TrueManAvatarController {
     this.emotionReleaseAt = null;
     if (emotion === this.emotion) return;
     if (!immediate) this.triggerBlink();
+    // Emotion photos look at the viewer; blending them with averted eyes would ghost.
+    this.setGaze("center");
     this.emotionStartWeights = { ...this.emotionWeights };
     this.emotion = emotion;
     this.emotionMix = 0;
@@ -191,6 +207,7 @@ export class TrueManAvatarController {
     this.elapsed += deltaTime;
     this.thinkingPose += ((this.state === "thinking" ? 1 : 0) - this.thinkingPose) * (1 - Math.exp(-deltaTime * 3));
     if (!this.reducedMotion) this.updateHeadMotion(deltaTime, isSpeaking);
+    this.updateGaze(isSpeaking);
     if (this.emotionReleaseAt !== null) {
       if (isSpeaking) this.emotionReleaseAt = Math.max(this.emotionReleaseAt, this.elapsed + 1.8);
       else if (this.elapsed >= this.emotionReleaseAt) this.setEmotion("neutral", { immediate: true });
@@ -228,6 +245,28 @@ export class TrueManAvatarController {
       this.browCooldownUntil = this.elapsed + randomBetween(0.9, 1.8);
     }
     this.levelAverage += (level - this.levelAverage) * (1 - Math.exp(-deltaTime * 1.5));
+  }
+
+  updateGaze(isSpeaking) {
+    if (this.reducedMotion || this.emotion !== "neutral" || this.emotionMix < 1) { this.setGaze("center"); return; }
+    if (this.elapsed < this.nextGazeAt || !this.images.gaze.size) return;
+    const pattern = GAZE_PATTERNS[isSpeaking ? "speaking" : this.state] || GAZE_PATTERNS.idle;
+    const targets = pattern.targets.filter((name) => this.images.gaze.has(name));
+    const goAway = this.gaze === "center" && targets.length;
+    this.setGaze(goAway ? targets[Math.floor(Math.random() * targets.length)] : "center");
+    const [min, max] = goAway ? pattern.away : pattern.center;
+    this.nextGazeAt = this.elapsed + randomBetween(min, max);
+  }
+
+  setGaze(gaze) {
+    if (gaze === this.gaze) return;
+    // Large saccades are often accompanied by a blink.
+    if ((STRONG_GAZES.has(gaze) || STRONG_GAZES.has(this.gaze)) && Math.random() < 0.4) this.triggerBlink();
+    this.gaze = gaze;
+  }
+
+  gazeImage(gaze) {
+    return this.images.gaze.get(gaze) || this.images.base;
   }
 
   updateBlink(deltaTime) {
@@ -305,20 +344,32 @@ export class TrueManAvatarController {
 
     const emotionRegion = this.manifest.regions.emotion || this.manifest.regions.face;
     const expressions = Object.entries(this.emotionWeights).map(([name, weight]) => ({
-      image: name === "neutral" ? this.images.base : this.images.emotions.get(name), weight,
+      name, image: name === "neutral" ? this.images.base : this.images.emotions.get(name), weight,
     }));
-    const browLift = this.reducedMotion || !this.images.emotions.has("surprised") ? 0 :
+    // The surprised photo looks at the viewer, so only flash brows on a centred gaze.
+    const browLift = this.reducedMotion || this.gaze !== "center" || !this.images.emotions.has("surprised") ? 0 :
       getBrowLift(this.elapsed - this.browStartedAt) * BROW_LIFT_WEIGHT;
-    const eyeExpressions = browLift > 0.005 ? [
-      ...expressions.map((entry) => ({ ...entry, weight: entry.weight * (1 - browLift) })),
-      { image: this.images.emotions.get("surprised"), weight: browLift },
-    ] : expressions;
+    // Gaze photos only replace the neutral eyes; an emotion photo keeps its own eyes.
+    const eyeExpressions = expressions.map((entry) => ({
+      ...entry, image: entry.name === "neutral" ? this.gazeImage(this.gaze) : entry.image, weight: entry.weight * (1 - browLift),
+    }));
+    if (browLift > 0.005) eyeExpressions.push({ image: this.images.emotions.get("surprised"), weight: browLift });
     if (emotionRegion) this.drawFeature(eyeExpressions, emotionRegion);
     const mouthRegion = this.manifest.regions.mouth;
     const rig = this.manifest.rig;
-    if (mouthRegion) {
-      if (rig?.mouth && this.mouthWeight > 0) {
-        const rest = rig.mouth.neutral;
+    if (mouthRegion && rig?.mouth) {
+      // Emotion mouths such as a wide smile sit elsewhere; morph lips between
+      // their anchors instead of dissolving, which would show two lip lines.
+      const mouthExpressions = expressions.map((entry) => ({
+        ...entry,
+        bounds: rig.emotionMouth?.[entry.name]?.inner || rig.mouth.neutral,
+        outer: rig.emotionMouth?.[entry.name]?.outer || rig.mouthOuter.neutral,
+      }));
+      const blendAnchors = (key) => rig.mouth.neutral.map((_, index) =>
+        mouthExpressions.reduce((sum, entry) => sum + entry[key][index] * entry.weight, 0));
+      const rest = blendAnchors("bounds");
+      const restOuter = blendAnchors("outer");
+      if (this.mouthWeight > 0) {
         // Use the open /o/ photo for rounded vowels; the /u/ photo itself is
         // strongly pursed. Distinguish /u/ with a smaller aperture, not thicker lips.
         const relaxedWeights = {};
@@ -347,7 +398,6 @@ export class TrueManAvatarController {
         const nativeGap = target[3] - target[1];
         target[3] = target[1] + nativeGap * (1 - roundO - roundU) +
           (4 + opening * 42) * roundO + (4 + opening * 30) * roundU;
-        const restOuter = rig.mouthOuter.neutral;
         const targetOuter = [
           centerX + (restOuter[0] - centerX) *  MOUTH_WIDTH_SCALE * (1 - roundO * 0.14 - roundU * 0.2),
           target[1] - (rest[1] - restOuter[1]) * (1 - 0.12 * articulation),
@@ -358,11 +408,11 @@ export class TrueManAvatarController {
         // never the opacity of an open mouth laid over the closed base photograph.
         const textureMix = articulation;
         this.drawFeature([
-          ...expressions.map((entry) => ({ ...entry, weight: entry.weight * (1 - textureMix), bounds: rest, outer: restOuter })),
+          ...mouthExpressions.map((entry) => ({ ...entry, weight: entry.weight * (1 - textureMix) })),
           ...sources.map(([name, weight]) => ({ image: this.images.visemes.get(name), weight: weight * textureMix, bounds: rig.mouth[name], outer: rig.mouthOuter[name] })),
         ], mouthRegion, target, targetOuter);
-      } else this.drawFeature(expressions, mouthRegion);
-    }
+      } else this.drawFeature(mouthExpressions, mouthRegion, rest, restOuter);
+    } else if (mouthRegion) this.drawFeature(expressions, mouthRegion);
     if (rig?.eyes && this.images.blink && this.blinkProgress > 0) {
       const closure = easeInOutSine(this.blinkProgress) * this.blinkDepth;
       for (const eye of rig.eyes) {
@@ -452,7 +502,7 @@ export class TrueManAvatarController {
     this.loadToken = (this.loadToken || 0) + 1;
     this.resizeObserver?.disconnect();
     this.motionMedia?.removeEventListener?.("change", this.motionListener);
-    this.images = { base: null, blink: null, visemes: new Map(), emotions: new Map() };
+    this.images = { base: null, blink: null, visemes: new Map(), emotions: new Map(), gaze: new Map() };
     this.patchCache?.clear();
     this.loaded = false;
     this.context?.clearRect(0, 0, this.canvas.width, this.canvas.height);

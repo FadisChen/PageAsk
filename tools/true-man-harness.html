@@ -39,6 +39,22 @@
       pause() { paused = true; },
       resume() { paused = false; last = performance.now(); },
       step(seconds, frames = 1) { for (let i = 0; i < frames; i += 1) tick(seconds / frames); },
+      // Returns a JPEG data URL of a manifest-space region of the rendered canvas.
+      grab(region, scale = 1) {
+        const canvas = $("avatar");
+        const design = avatar.manifest.canvas;
+        const fit = Math.min(canvas.width / design.width, canvas.height / design.height);
+        const originX = (canvas.width - design.width * fit) / 2;
+        const originY = (canvas.height - design.height * fit) / 2;
+        const shot = document.createElement("canvas");
+        shot.width = region[2] * fit * scale;
+        shot.height = region[3] * fit * scale;
+        const context = shot.getContext("2d");
+        context.fillStyle = getComputedStyle(document.body).backgroundColor;
+        context.fillRect(0, 0, shot.width, shot.height);
+        context.drawImage(canvas, originX + region[0] * fit, originY + region[1] * fit, region[2] * fit, region[3] * fit, 0, 0, shot.width, shot.height);
+        return shot.toDataURL("image/jpeg", 0.92);
+      },
     };
 
     function syntheticMouth(time) {
