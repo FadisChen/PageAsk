@@ -45,8 +45,7 @@
   "blink": "./assets/variants-v5/blink.webp",
   "gaze": {
     "left-soft": "./assets/variants-v5/gaze-left-soft.webp",
-    "right-soft": "./assets/variants-v5/gaze-right-soft.webp",
-    "up-soft": "./assets/variants-v5/gaze-up-soft.webp"
+    "right-soft": "./assets/variants-v5/gaze-right-soft.webp"
   },
   "emotions": {
     "neutral": null,

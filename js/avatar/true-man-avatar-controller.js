@@ -12,14 +12,14 @@ const EMOTION_MOUTH_LIFT = 0.4;
 const BLINK_INTERVALS = { idle: [2, 6], listening: [3, 7], thinking: [2.5, 6], speaking: [2, 5] };
 // Eyes jump between gaze photos with a hard cut, like a real saccade; any
 // partial blend of two photos with different gaze shows two irises.
-// Only small (~5°) gaze photos are used: wider aversions look staged on a
-// single frontal photograph. Per state: how long the eyes rest on centre, how
+// Only small (~5°) sideways gaze photos are used: wider aversions and upward
+// looks read as staged on a single frontal photograph. Per state: how long the eyes rest on centre, how
 // long they stay away, and where they go.
 const GAZE_PATTERNS = {
   idle: { center: [2.5, 6], away: [0.5, 1.2], targets: ["left-soft", "right-soft"] },
   listening: { center: [3.5, 7], away: [0.3, 0.7], targets: ["left-soft", "right-soft"] },
-  speaking: { center: [2.5, 5.5], away: [0.4, 1], targets: ["left-soft", "right-soft", "up-soft"] },
-  thinking: { center: [0.4, 0.8], away: [1.4, 3], targets: ["up-soft", "left-soft", "right-soft", "up-soft"] },
+  speaking: { center: [2.5, 5.5], away: [0.4, 1], targets: ["left-soft", "right-soft"] },
+  thinking: { center: [0.4, 0.8], away: [1.4, 3], targets: ["left-soft", "right-soft"] },
 };
 
 // Head motion for a single frontal photograph: pixel nods and radian leans
