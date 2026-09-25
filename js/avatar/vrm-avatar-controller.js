@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
-import { AVATAR_EMOTIONS } from "./emotions.js";
+import { AVATAR_EMOTIONS, AVATAR_EMOTION_HOLD_SECONDS } from "./emotions.js";
 import { AvatarGesturePlayer } from "./gestures.js";
 
 const NATURAL_ARM_DROP = 1.25;
@@ -45,6 +45,7 @@ export class VrmAvatarController {
     this.emotion = "neutral";
     this.emotionFrom = "neutral";
     this.emotionMix = 1;
+    this.emotionReleaseAt = null;
     this.viseme = "none";
     this.mouthWeight = 0;
     this.outputLevel = 0;
@@ -113,12 +114,23 @@ export class VrmAvatarController {
   playGesture(gesture) { this.gestures.queue(gesture); }
   finishTurn() { this.gestures.finishTurn(); }
   resetAnimation() { this.gestures.reset(); this.setEmotion("neutral"); this.setViseme("none", 0, 0); }
+  finishSpeech() {
+    this.gestures.reset();
+    if (this.emotion !== "neutral") {
+      this.emotionReleaseAt = this.elapsed + AVATAR_EMOTION_HOLD_SECONDS;
+    }
+    this.setViseme("none", 0, 0);
+  }
 
   update(deltaTime, audioPlaying = false) {
     const delta = Math.min(0.1, Math.max(0, Number(deltaTime) || 0));
     this.elapsed += delta;
     this.yaw += (this.targetYaw - this.yaw) * (1 - Math.exp(-delta * 10));
     if (this.vrm?.scene) this.vrm.scene.rotation.y = this.yaw;
+    if (this.emotionReleaseAt !== null) {
+      if (audioPlaying) this.emotionReleaseAt = Math.max(this.emotionReleaseAt, this.elapsed + AVATAR_EMOTION_HOLD_SECONDS);
+      else if (this.elapsed >= this.emotionReleaseAt) this.setEmotion("neutral");
+    }
     if (this.emotionMix < 1) this.emotionMix = Math.min(1, this.emotionMix + delta / 0.3);
     this.updateBlink(delta);
     if (this.loaded && this.vrm) {

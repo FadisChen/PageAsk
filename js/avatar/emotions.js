@@ -1,4 +1,5 @@
 export const AVATAR_EMOTIONS = Object.freeze(["neutral", "happy", "sad", "angry", "surprised"]);
+export const AVATAR_EMOTION_HOLD_SECONDS = 3;
 
 export const AVATAR_EMOTION_TOOL = Object.freeze({
   name: "set_avatar_emotion",

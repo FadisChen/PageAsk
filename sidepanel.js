@@ -616,7 +616,7 @@ async function startSession() {
       onAudioChunk: (bytes) => state.session?.sendAudio(bytes),
       onLevel: (level) => { elements.levelBar.style.width = `${Math.round(level * 100)}%`; },
       onOutputStarted: () => { avatarStateMachine.toSpeaking(); avatarController?.finishTurn(); },
-      onOutputDrained: () => { lipSync?.reset(); avatarController?.resetAnimation(); if (state.started) avatarStateMachine.toListening(); },
+      onOutputDrained: () => { lipSync?.reset(); avatarController?.finishSpeech(); if (state.started) avatarStateMachine.toListening(); },
     });
     await state.audio.start({ captureMicrophone: useMicrophone });
     lipSync = new LipSyncAnalyzer(state.audio.getAnalyser());

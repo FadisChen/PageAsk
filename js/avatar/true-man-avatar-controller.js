@@ -1,3 +1,5 @@
+import { AVATAR_EMOTION_HOLD_SECONDS } from "./emotions.js";
+
 const DEFAULT_STATE = "idle";
 const EMOTION_CROSSFADE_SECONDS = 0.55;
 const VISEME_CROSSFADE_SECONDS = 0.06;
@@ -173,7 +175,7 @@ export class TrueManAvatarController {
       this.emotionReleaseAt = this.emotionHoldUntil;
       return;
     }
-    this.emotionHoldUntil = emotion === "neutral" ? 0 : this.elapsed + 3.5;
+    this.emotionHoldUntil = emotion === "neutral" ? 0 : this.elapsed + AVATAR_EMOTION_HOLD_SECONDS;
     this.emotionReleaseAt = null;
     if (emotion === this.emotion) return;
     if (!immediate) this.triggerBlink();
@@ -203,6 +205,7 @@ export class TrueManAvatarController {
 
   finishTurn() { this.triggerBlink(); }
   resetAnimation() { this.reset(); }
+  finishSpeech() { this.reset({ preserveEmotion: true }); }
 
   // Blinks cluster around cognitive events (turn start, new emotion, thinking).
   triggerBlink() {
@@ -489,9 +492,14 @@ export class TrueManAvatarController {
     this.context.drawImage(patch, x, y, width, height);
   }
 
-  reset() {
+  reset({ preserveEmotion = false } = {}) {
     this.state = DEFAULT_STATE;
-    this.setEmotion("neutral", { immediate: true });
+    if (preserveEmotion && this.emotion !== "neutral") {
+      this.emotionHoldUntil = Math.max(this.emotionHoldUntil, this.elapsed + AVATAR_EMOTION_HOLD_SECONDS);
+      this.emotionReleaseAt = Math.max(this.emotionReleaseAt ?? 0, this.emotionHoldUntil);
+    } else {
+      this.setEmotion("neutral", { immediate: true });
+    }
     this.viseme = "none";
     this.visemeMix = 1;
     this.targetMouthWeight = 0;
