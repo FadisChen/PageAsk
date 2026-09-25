@@ -90,7 +90,7 @@ Live client 不直接呼叫 Chrome API。瀏覽器操作集中在 service worker
 | Podcast TTS model | `gemini-3.1-flash-tts-preview` | 固定設定 | 將 Podcast 講稿轉換為單人／雙人語音（WAV） |
 | 3D | Three.js | `^0.178.0` | WebGL 場景、動畫與音訊視覺化 |
 | VRM | `@pixiv/three-vrm` | `^3.4.0` | 載入與更新 VRM Avatar |
-| 真人 Avatar | Canvas 2D + 本機 PNG 圖層 | AvatarTrueMan manifest | 真人照片表情、嘴型、眨眼與呼吸動畫 |
+| 真人 Avatar | Canvas 2D + 本機 WebP 圖層 | AvatarTrueMan manifest | 真人照片表情、嘴型、眨眼、眼神、依狀態的頭部動作與呼吸動畫 |
 | File parsing | PDF.js、OpenCC | vendor 目錄內嵌 | PDF 文字抽取與簡體轉臺灣繁體中文 |
 | Build | Vite | `^7.1.5` | 打包 side panel 與 service worker |
 | Test | Node.js test runner | Node.js 20.19+ 或 22.12+ | 單元與靜態驗證 |
@@ -192,7 +192,9 @@ PageAsk/
 │   │   ├── true-man-avatar-controller.js # 真人 2D Canvas controller
 │   │   └── vrm-avatar-controller.js # Three.js / VRM controller
 ├── avatars/sha.vrm               # 預設 Avatar 資產
-├── avatars/true-man/              # 真人模式 manifest 與 PNG 圖層
+├── avatars/true-man/              # 真人模式 manifest 與 WebP 圖層
+├── tools/true-man-harness.html   # 真人 Avatar 本機驗證頁（以 http server 開啟 repo 根目錄）
+├── tools/matte-true-man-base.py  # 將棋盤格底圖離線去背為帶 alpha 的底圖
 ├── scripts/copy-static.mjs       # 複製 manifest、vendor 與資產至 dist
 ├── vite.config.js                # Vite 多 entry build 設定
 ├── tests/                        # Node.js tests
@@ -205,7 +207,7 @@ PageAsk/
 - 需要 Chrome 120+；Reading List API 從 Chrome 120 開始支援。
 - 單一檔案上限 10 MiB；來源另有 60,000 Unicode 字元的絕對防護上限。
 - 來源會以 token 估算控管：約 16,000 tokens 起顯示長來源警告，最多保留約 20,000 tokens。
-- VRM 模式需要 WebGL；真人模式會額外載入約 19.5 MiB 的本機 PNG 圖層。任一 Avatar 載入失敗時，Live 語音／文字功能仍可使用。
+- VRM 模式需要 WebGL；真人模式會額外載入約 3.3 MiB 的本機 WebP 圖層。任一 Avatar 載入失敗時，Live 語音／文字功能仍可使用。
 - 目前不支援 Office 檔案、OCR、圖片／影音檔案來源、多來源累加與雲端記憶同步。
 - 直接關閉 side panel 或瀏覽器不會保證建立歷史紀錄，也不會執行未完成的會後記憶整理。
 

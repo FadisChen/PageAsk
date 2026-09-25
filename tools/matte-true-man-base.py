@@ -9,7 +9,7 @@ fringes on every strand. This script:
      hair, unmixes each pixel against the two checker greys (least squares,
      P = a*F + (1-a)*B) to recover a soft alpha and the hair colour.
 
-Usage: python tools/matte-true-man-base.py <checker-input.png> <output.png>
+Usage: python tools/matte-true-man-base.py <checker-input.png> <output.webp>
 The original checker input is avatars/true-man/assets/avatar-base-v5.png in
 commit 714c1b4.
 """
@@ -82,7 +82,8 @@ def main(source, target):
     colour[background] = 0
 
     rgba = np.dstack([colour, alpha * 255]).round().clip(0, 255).astype(np.uint8)
-    Image.fromarray(rgba).save(target, optimize=True)
+    # WebP keeps alpha lossless (alpha_quality=100); PNG ignores these options.
+    Image.fromarray(rgba).save(target, quality=92, method=6, alpha_quality=100)
     print(f"background {background.mean():.1%}, band {band.sum()} px -> {target}")
 
 
