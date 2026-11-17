@@ -30,6 +30,10 @@ async function configureSidePanel() {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== MENU_ID || !info.selectionText?.trim()) return;
   try {
+    // Open the panel first: awaiting storage before open() can outlive the user gesture.
+    const opening = tab?.windowId != null
+      ? chrome.sidePanel.open({ windowId: tab.windowId }).catch((error) => console.warn("PageAsk side panel open failed:", error.message))
+      : null;
     const source = createActiveSource({
       kind: "web-selection",
       title: tab?.title || "網頁反白文字",
@@ -37,7 +41,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       text: info.selectionText,
     });
     await storeAndAnnounce(source);
-    if (tab?.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
+    await opening;
   } catch (error) {
     console.warn("PageAsk selection failed:", error.message);
   }
@@ -56,12 +60,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// These actions touch browser data or inject scripts, so only PageAsk's own pages may request them.
+const EXTENSION_PAGE_ONLY = new Set([
+  MESSAGE_TYPES.START_BLOCK_PICKER,
+  MESSAGE_TYPES.EXTRACT_PAGE,
+  MESSAGE_TYPES.EXECUTE_BROWSER_TOOL,
+]);
+
+function isExtensionPage(sender) {
+  return typeof sender?.url === "string" && sender.url.startsWith(chrome.runtime.getURL(""));
+}
+
 async function handleMessage(message, sender) {
+  if (EXTENSION_PAGE_ONLY.has(message?.type) && !isExtensionPage(sender)) {
+    throw new Error("這項操作只接受來自 PageAsk 側欄的請求。");
+  }
+
   if (message?.type === MESSAGE_TYPES.START_BLOCK_PICKER) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error("找不到目前作用中的網頁分頁。");
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content-picker.js"] });
     return { status: "picker-started" };
+  }
+
+  if (message?.type === MESSAGE_TYPES.EXTRACT_PAGE) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw new Error("找不到目前作用中的網頁分頁。");
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPageContent });
+    const page = injection?.result;
+    const source = createActiveSource({
+      kind: "web-page",
+      title: page?.title || tab.title || "網頁全文",
+      url: page?.url || tab.url,
+      text: page?.text,
+    });
+    await storeAndAnnounce(source);
+    return { source };
   }
 
   if (message?.type === MESSAGE_TYPES.BLOCK_PICKED) {
@@ -85,6 +119,18 @@ async function handleMessage(message, sender) {
   }
 
   return { status: "ignored" };
+}
+
+// Runs inside the page via chrome.scripting, so it must not reference anything outside itself.
+function extractPageContent() {
+  let best = null;
+  let bestLength = 0;
+  for (const element of document.querySelectorAll("article, main, [role='main']")) {
+    const length = (element.innerText || "").trim().length;
+    if (length > bestLength) { best = element; bestLength = length; }
+  }
+  const root = best && bestLength > 200 ? best : document.body;
+  return { title: document.title, url: location.href, text: (root?.innerText || "").trim() };
 }
 
 async function executeBrowserTool(name, args) {

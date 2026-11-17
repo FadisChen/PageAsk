@@ -53,3 +53,9 @@ test("page URLs only retain http and https protocols", () => {
   assert.equal(safePageUrl("chrome://extensions"), "");
   assert.equal(safePageUrl("javascript:alert(1)"), "");
 });
+
+test("whole-page sources are accepted and get a default title", () => {
+  const source = createActiveSource({ kind: "web-page", text: "整頁內容", url: "https://example.com/" });
+  assert.equal(source.kind, "web-page");
+  assert.equal(source.title, "網頁全文");
+});

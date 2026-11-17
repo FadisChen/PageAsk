@@ -6,9 +6,8 @@ PageAsk 是以 Chrome Manifest V3 Side Panel 為主要工作區的 Gemini Live �
 
 ## 主要功能
 
-- 閱讀模式：使用網頁區塊、右鍵反白文字或本機檔案作為對談來源
-- 本機來源支援 PDF、TXT、Markdown、CSV 與 JSON；檔案先在瀏覽器內抽取文字
-- 閱讀模式可將目前來源一鍵產生單人或雙人 Podcast 音檔，沿用對談設定的 Gemini 聲線，並支援線上播放與下載
+- 閱讀模式：使用整頁內容、網頁區塊、右鍵反白文字或本機檔案作為對談來源
+- 本機來源支援 PDF、TXT、Markdown、CSV 與 JSON；檔案先在瀏覽器內抽取文字（TXT/CSV 自動辨識 UTF-8 或 Big5；沒有文字層的掃描 PDF 會提示不支援）
 - 陪伴模式：不需要來源即可開始對談
 - Gemini 3.8 Live 雙向語音、文字輸入、雙方字幕、VAD、插話、session resumption 與重連
 - Side panel 內可切換 VRM 或 AvatarTrueMan 真人 2D Avatar；兩者都支援表情、待機動作與 lip-sync，VRM 另支援骨骼手勢
@@ -31,7 +30,7 @@ Side panel 統一管理語音、字幕、Avatar、來源、設定、歷史紀錄
 - Live session 使用 context window compression（25,000 tokens 觸發、sliding window 目標 8,000 tokens）、session resumption 與 GoAway/斷線重連。
 - 純文字回應若停在明顯未完成的句子，client 會自動要求最多兩次續接；語音模式則維持一般 turn 完成流程。
 - 表情與動作工具只控制角色，不列入工具 feed 或口語回覆；grounding、YouTube 與瀏覽器工具結果才會顯示在工具區。
-- 結束對談時會保存逐字稿歷史；陪伴模式若啟用記憶，會再以 `gemini-3.8-flash` 整理未鎖定記憶。
+- 結束對談時會保存逐字稿歷史；陪伴模式若啟用記憶，會再以輔助模型（預設 `gemini-3.5-flash-lite`，可在設定中修改）整理未鎖定記憶。
 
 ## 系統架構
 
@@ -53,7 +52,6 @@ flowchart LR
 - `js/screen-share.js`：getDisplayMedia 畫面擷取、縮圖與 JPEG 影格
 - `js/file-parser.js`：PDF.js 與文字檔解析
 - `js/history.js` / `js/memory.js`：歷史紀錄與陪伴記憶的清理、上限、匯出與整理
-- `js/podcast.js`：Podcast 講稿與語音生成、長講稿分段、PCM 合併與 WAV 封裝
 - `js/avatar/`：Three.js／VRM、真人 2D Canvas 載入、表情、手勢、狀態機與 lip-sync
 - `js/browser-tools.js`：瀏覽器工具宣告、權限清單、安全 URL 驗證與 mutation 分類
 
@@ -66,7 +64,7 @@ Live client 不直接呼叫 Chrome API。瀏覽器操作集中在 service worker
 | Tool | 用途 | 執行方式 |
 | --- | --- | --- |
 | `ground_with_google_search` | 以 Google Search 補充即時來源 | Gemini 2.5 Flash，結果以 `WHEN_IDLE` 回傳 |
-| `analyze_youtube_video` | 分析公開 YouTube 影片與指定時間片段 | Gemini 3.8 Flash，非同步執行 |
+| `analyze_youtube_video` | 分析公開 YouTube 影片與指定時間片段 | 輔助模型（預設 Gemini 3.5 Flash-Lite），非同步執行 |
 | `set_avatar_emotion` | 設定 Avatar 情緒 | `NON_BLOCKING`，不阻塞語音 |
 | `play_avatar_gesture` | 播放 Avatar 手勢 | `NON_BLOCKING`，不阻塞語音 |
 
@@ -86,8 +84,7 @@ Live client 不直接呼叫 Chrome API。瀏覽器操作集中在 service worker
 | Extension | Chrome Manifest V3 | Chrome 120+ | Side Panel、service worker、optional permissions |
 | Live model | `gemini-3.8-live` | 固定 allowlist | 即時雙向語音與文字對談 |
 | Search model | `gemini-2.5-flash` | 固定設定 | Google Search grounding |
-| Auxiliary model | `gemini-3.5-flash-lite` | 固定設定 | YouTube 分析、記憶整理與 Podcast 講稿生成 |
-| Podcast TTS model | `gemini-3.1-flash-tts-preview` | 固定設定 | 將 Podcast 講稿轉換為單人／雙人語音（WAV） |
+| Auxiliary model | `gemini-3.5-flash-lite` | 預設值，可在設定表單修改 | YouTube 分析與記憶整理 |
 | 3D | Three.js | `^0.178.0` | WebGL 場景、動畫與音訊視覺化 |
 | VRM | `@pixiv/three-vrm` | `^3.4.0` | 載入與更新 VRM Avatar |
 | 真人 Avatar | Canvas 2D + 本機 WebP 圖層 | AvatarTrueMan manifest | 真人照片表情、嘴型、眨眼、眼神、依狀態的頭部動作與呼吸動畫 |
@@ -178,7 +175,6 @@ PageAsk/
 │   ├── file-parser.js             # PDF、文字、JSON 來源解析
 │   ├── history.js                # 對談歷史建立、搜尋與匯出
 │   ├── memory.js                 # 記憶 token 預算與會後整理
-│   ├── podcast.js                # Podcast 講稿／語音生成、分段與 WAV 封裝
 │   ├── transcript.js              # 串流字幕合併與工具回覆過濾
 │   ├── traditional-chinese.js    # 簡體中文 STT 轉換
 │   ├── browser-tools.js          # 瀏覽器 tools 宣告與安全驗證
@@ -232,7 +228,6 @@ npm run build
 - Avatar tools 靜默執行、字幕工具資訊過濾
 - optional permissions、瀏覽器工具安全 URL 與 mutation confirmation
 - history、memory、settings migration、字幕串流合併與繁體中文轉換
-- Podcast 講稿 prompt、分段規則、TTS speechConfig 與 WAV 封裝
 - Vite build 後 manifest、entry points 與 web-accessible resources
 
 ## 常見問題

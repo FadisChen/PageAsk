@@ -38,7 +38,6 @@ test("production source contains only the approved models and no fallback provid
   const modelNames = [...source.matchAll(/gemini-[a-z0-9.-]+/gi)].map((match) => match[0]);
   assert.deepEqual([...new Set(modelNames)].sort(), [
     "gemini-2.5-flash",
-    "gemini-3.1-flash-tts-preview",
     "gemini-3.5-flash-lite",
     "gemini-3.8-live",
   ]);
@@ -174,7 +173,7 @@ test("Avatar stays in the side panel with subtitles over the canvas", async () =
 test("真人 Avatar keeps the shared output-drained controller interface", async () => {
   const panel = await readFile(path.join(root, "sidepanel.js"), "utf8");
   const controller = await readFile(path.join(root, "js", "avatar", "true-man-avatar-controller.js"), "utf8");
-  assert.match(panel, /avatarController\?\.resetAnimation\(\)/);
+  assert.match(panel, /avatarController\?\.finishSpeech\(\)/);
   assert.match(controller, /resetAnimation\(\)\s*\{\s*this\.reset\(\);\s*\}/);
 });
 

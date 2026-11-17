@@ -2,12 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  AUXILIARY_MODEL,
   DEFAULT_COMPANION_SYSTEM_PROMPT,
   DEFAULT_LIVE_MODEL,
   LEGACY_COMPANION_SYSTEM_PROMPT,
   LIVE_MODEL_OPTIONS,
 } from "../js/constants.js";
 import {
+  cleanModelId,
   cleanHistory,
   cleanHistoryEntry,
   cleanMemories,
@@ -131,4 +133,11 @@ test("estimateStorageBytes counts UTF-8 bytes, not UTF-16 code units", () => {
   const value = "中文字元";
   const naiveLength = JSON.stringify(value).length;
   assert.ok(estimateStorageBytes(value) > naiveLength);
+});
+
+test("auxiliary model setting defaults, normalizes and rejects malformed ids", () => {
+  assert.equal(cleanSettings({}).auxiliaryModel, AUXILIARY_MODEL);
+  assert.equal(cleanSettings({ auxiliaryModel: " models/gemini-custom-1 " }).auxiliaryModel, "gemini-custom-1");
+  assert.equal(cleanSettings({ auxiliaryModel: "bad/../model" }).auxiliaryModel, AUXILIARY_MODEL);
+  assert.equal(cleanModelId("bad id", null), null);
 });

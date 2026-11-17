@@ -101,6 +101,7 @@ export class BrowserAudioEngine {
       channel[index] = view.getInt16(index * 2, true) / 32768;
     }
 
+    const wasIdle = this.activeSources.size === 0;
     const source = this.context.createBufferSource();
     source.buffer = buffer;
     source.connect(this.outputGain || this.context.destination);
@@ -108,7 +109,8 @@ export class BrowserAudioEngine {
     source.start(startAt);
     this.nextPlayTime = startAt + buffer.duration;
     this.activeSources.add(source);
-    this.onOutputStarted?.();
+    // Only the first chunk of an utterance starts output; later chunks would retrigger avatar turn effects.
+    if (wasIdle) this.onOutputStarted?.();
     source.onended = () => {
       this.activeSources.delete(source);
       if (!this.activeSources.size) this.onOutputDrained?.();

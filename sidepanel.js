@@ -12,6 +12,7 @@ import {
   isMutatingBrowserTool,
 } from "./js/browser-tools.js";
 import {
+  AUXILIARY_MODEL,
   DEFAULT_COMPANION_SYSTEM_PROMPT,
   DEFAULT_LIVE_MODEL,
   MESSAGE_TYPES,
@@ -38,10 +39,10 @@ import {
   matchesHistorySearch,
 } from "./js/history.js";
 import { fitMemoriesToBudget, processCompanionMemory } from "./js/memory.js";
-import { generatePodcastAudio, generatePodcastScript } from "./js/podcast.js";
 import { ScreenShare } from "./js/screen-share.js";
 import { createActiveSource, estimateSourceTokens } from "./js/source.js";
 import {
+  cleanModelId,
   createMemory,
   clearSource,
   estimateTokens,
@@ -113,10 +114,7 @@ export class TranscriptCollector {
 const elements = Object.fromEntries([
   "settingsButton", "historyButton", "readingModeButton", "companionModeButton",
   "sourceSection", "sourceState", "sourceCard", "sourceKind", "sourceTitle", "sourcePreview",
-  "sourceLink", "sourceWarning", "pickBlockButton", "uploadButton", "fileInput", "clearSourceButton",
-  "podcastButton", "podcastDialog", "podcastCloseButton", "podcastFormatSolo", "podcastFormatDuo",
-  "podcastVoice1", "podcastVoice2Field", "podcastVoice2", "podcastGenerateButton", "podcastStatus",
-  "podcastResult", "podcastAudioPlayer", "podcastDownloadLink",
+  "sourceLink", "sourceWarning", "pageButton", "pickBlockButton", "uploadButton", "fileInput", "clearSourceButton",
   "conversationHeading", "connectionPill", "connectionText", "voiceStage", "levelBar", "avatarCanvas", "trueManAvatarCanvas", "avatarFallback",
   "enableBrowserToolsButton",
   "sourceDetailsButton", "sourceSummaryTitle", "sourceDialog", "sourceCloseButton",
@@ -127,7 +125,7 @@ const elements = Object.fromEntries([
   "textOnlyMode",
   "settingsDialog", "panelSettingsForm", "settingsCloseButton", "settingsCancelButton",
   "settingsApiKey", "settingsToggleKeyButton",
-  "settingsVoiceName", "settingsTrueManMode", "settingsTestButton", "settingsTestStatus",
+  "settingsVoiceName", "settingsAuxiliaryModel", "settingsTrueManMode", "settingsTestButton", "settingsTestStatus",
   "settingsCompanionPrompt", "settingsResetPromptButton", "settingsMemoryEnabled", "settingsMemoryBudget",
   "memoryUsage", "newMemoryButton", "newMemoryEditor", "newMemoryContent", "newMemoryLocked",
   "saveNewMemoryButton", "cancelNewMemoryButton", "memoryList",
@@ -187,9 +185,6 @@ function populateVoiceOptions(select) {
 }
 
 populateVoiceOptions(elements.settingsVoiceName);
-populateVoiceOptions(elements.podcastVoice1);
-populateVoiceOptions(elements.podcastVoice2);
-let podcastAudioUrl = null;
 
 elements.settingsButton.addEventListener("click", openSettings);
 elements.historyButton.addEventListener("click", openHistory);
@@ -224,16 +219,11 @@ elements.settingsDialog.addEventListener("click", (event) => {
 });
 elements.readingModeButton.addEventListener("click", () => setConversationMode("reading"));
 elements.companionModeButton.addEventListener("click", () => setConversationMode("companion"));
+elements.pageButton.addEventListener("click", useWholePage);
 elements.pickBlockButton.addEventListener("click", startBlockPicker);
 elements.clearSourceButton.addEventListener("click", clearCurrentSource);
 elements.uploadButton.addEventListener("click", () => elements.fileInput.click());
 elements.fileInput.addEventListener("change", handleFileUpload);
-elements.podcastButton.addEventListener("click", openPodcastDialog);
-elements.podcastCloseButton.addEventListener("click", () => elements.podcastDialog.close());
-elements.podcastFormatSolo.addEventListener("change", renderPodcastFormat);
-elements.podcastFormatDuo.addEventListener("change", renderPodcastFormat);
-elements.podcastGenerateButton.addEventListener("click", generatePodcast);
-elements.podcastDialog.addEventListener("close", resetPodcastResult);
 elements.startButton.addEventListener("click", startSession);
 elements.muteButton.addEventListener("click", toggleMute);
 elements.screenShareButton.addEventListener("click", toggleScreenShare);
@@ -262,7 +252,7 @@ elements.transcript.addEventListener("scroll", () => {
   followTranscript = elements.transcript.scrollHeight - elements.transcript.clientHeight - elements.transcript.scrollTop < 32;
   elements.latestTranscriptButton.classList.toggle("is-hidden", followTranscript);
 });
-for (const dialog of [elements.sourceDialog, elements.transcriptDialog, elements.podcastDialog]) {
+for (const dialog of [elements.sourceDialog, elements.transcriptDialog]) {
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
 }
 elements.enableBrowserToolsButton.addEventListener("click", enableBrowserTools);
@@ -317,77 +307,6 @@ async function clearCurrentSource() {
     toast("已清空目前來源，可以重新選取網頁內容或上傳檔案。");
   } catch (error) {
     toast(`清空來源失敗：${error.message}`, true);
-  }
-}
-
-function openPodcastDialog() {
-  if (!state.source) return;
-  elements.podcastFormatSolo.checked = true;
-  elements.podcastFormatDuo.checked = false;
-  const defaultVoice = VOICES.includes(state.settings.voiceName) ? state.settings.voiceName : VOICES[0];
-  elements.podcastVoice1.value = defaultVoice;
-  elements.podcastVoice2.value = VOICES.find((voice) => voice !== defaultVoice) || VOICES[0];
-  resetPodcastResult();
-  renderPodcastFormat();
-  elements.podcastDialog.showModal();
-}
-
-function renderPodcastFormat() {
-  elements.podcastVoice2Field.classList.toggle("is-hidden", !elements.podcastFormatDuo.checked);
-}
-
-function resetPodcastResult() {
-  if (podcastAudioUrl) {
-    URL.revokeObjectURL(podcastAudioUrl);
-    podcastAudioUrl = null;
-  }
-  elements.podcastAudioPlayer.pause();
-  elements.podcastAudioPlayer.removeAttribute("src");
-  elements.podcastResult.classList.add("is-hidden");
-  elements.podcastStatus.textContent = "";
-  elements.podcastStatus.className = "test-status";
-}
-
-async function generatePodcast() {
-  if (!state.source) return toast("請先選取網頁內容或上傳檔案。", true);
-  if (!state.settings.apiKey) {
-    elements.podcastDialog.close();
-    toast("請先輸入 Gemini API key。", true);
-    await openSettings();
-    return;
-  }
-  const format = elements.podcastFormatDuo.checked ? "duo" : "solo";
-  const voice1 = elements.podcastVoice1.value;
-  const voice2 = elements.podcastVoice2.value;
-  if (format === "duo" && voice1 === voice2) {
-    return toast("雙人對談請選擇兩個不同的聲線。", true);
-  }
-
-  resetPodcastResult();
-  setBusy(elements.podcastGenerateButton, true, "產生中…");
-  elements.podcastStatus.textContent = "正在生成 Podcast 講稿…";
-
-  try {
-    const script = await generatePodcastScript(state.settings.apiKey, state.source.text, format, { voice1, voice2 });
-    const audioBlob = await generatePodcastAudio(state.settings.apiKey, script, format, voice1, voice2, {
-      onProgress: (done, total) => {
-        elements.podcastStatus.textContent = total > 1 ? `正在生成語音（${done}/${total} 段）…` : "正在生成語音…";
-      },
-    });
-    podcastAudioUrl = URL.createObjectURL(audioBlob);
-    elements.podcastAudioPlayer.src = podcastAudioUrl;
-    elements.podcastDownloadLink.href = podcastAudioUrl;
-    elements.podcastDownloadLink.download = `${(state.source.title || "podcast").slice(0, 60)}.wav`;
-    elements.podcastResult.classList.remove("is-hidden");
-    elements.podcastStatus.textContent = "完成！";
-    elements.podcastStatus.className = "test-status is-success";
-  } catch (error) {
-    const message = friendlyApiError(error);
-    elements.podcastStatus.textContent = message;
-    elements.podcastStatus.className = "test-status is-error";
-    toast(`Podcast 產生失敗：${message}`, true);
-  } finally {
-    setBusy(elements.podcastGenerateButton, false);
   }
 }
 
@@ -517,16 +436,40 @@ async function enableBrowserTools() {
   }
 }
 
+async function ensurePageAccess() {
+  const pageAccessGranted = await chrome.permissions.request({ permissions: PAGE_ACCESS_PERMISSIONS, origins: BROWSER_TOOL_ORIGINS });
+  if (!pageAccessGranted) throw new Error("需要網頁內容存取權限才能讀取網頁。");
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.url && !/^https?:\/\//i.test(tab.url)) {
+    throw new Error("這個 Chrome 內建頁面不允許選取內容，請改用一般網頁。");
+  }
+}
+
+async function useWholePage() {
+  if (state.ending || state.memoryProcessing) return;
+  setBusy(elements.pageButton, true, "讀取中…");
+  try {
+    await ensurePageAccess();
+    const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.EXTRACT_PAGE });
+    if (!response?.ok) throw new Error(response?.error || "無法讀取網頁內容。");
+    applySource(response.source);
+    toast(response.source.truncated
+      ? "整頁內容已載入，超出 Live 來源上限的部分已截斷。"
+      : response.source.tokenWarning
+        ? "整頁內容已載入，來源較長，可能增加 Live 對談延遲。"
+        : "整頁內容已載入。");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    setBusy(elements.pageButton, false);
+  }
+}
+
 async function startBlockPicker() {
   if (state.ending || state.memoryProcessing) return;
   setBusy(elements.pickBlockButton, true, "等待選取…");
   try {
-    const pageAccessGranted = await chrome.permissions.request({ permissions: PAGE_ACCESS_PERMISSIONS, origins: BROWSER_TOOL_ORIGINS });
-    if (!pageAccessGranted) throw new Error("需要網頁內容存取權限才能選取區塊。");
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.url && !/^https?:\/\//i.test(tab.url)) {
-      throw new Error("這個 Chrome 內建頁面不允許選取內容，請改用一般網頁。");
-    }
+    await ensurePageAccess();
     const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.START_BLOCK_PICKER });
     if (!response?.ok) throw new Error(response?.error || "無法啟動網頁選取。");
     toast("請回到網頁，點選要對談的內容區塊。 ");
@@ -587,6 +530,7 @@ async function startSession() {
   state.activeMemoryConfig = state.activeMemoryEnabled ? {
     apiKey: state.settings.apiKey,
     budgetTokens: state.settings.companionMemoryBudgetTokens,
+    model: state.settings.auxiliaryModel,
   } : null;
   const promptMemories = state.activeMemoryEnabled
     ? fitMemoriesToBudget(state.memories, state.activeMemoryConfig.budgetTokens)
@@ -625,6 +569,7 @@ async function startSession() {
       apiKey: state.settings.apiKey,
       liveModel: DEFAULT_LIVE_MODEL,
       voiceName: state.settings.voiceName,
+      auxiliaryModel: state.settings.auxiliaryModel,
       systemInstruction: `${systemInstruction}${workspaceInstruction}`,
       additionalToolDeclarations: state.browserToolsGranted ? BROWSER_TOOL_DECLARATIONS : [],
       toolHandlers: state.browserToolsGranted ? createBrowserToolHandlers() : {},
@@ -666,6 +611,7 @@ async function openSettings() {
   state.memories = await loadMemories();
   elements.settingsApiKey.value = state.settings.apiKey;
   elements.settingsVoiceName.value = state.settings.voiceName;
+  elements.settingsAuxiliaryModel.value = state.settings.auxiliaryModel;
   elements.settingsTrueManMode.checked = state.settings.avatarMode === "true-man";
   elements.settingsCompanionPrompt.value = state.settings.companionSystemPrompt;
   elements.settingsMemoryEnabled.checked = state.settings.companionMemoryEnabled;
@@ -797,7 +743,7 @@ async function testAndSaveSettings() {
   setBusy(elements.settingsTestButton, true, "測試中…");
   showSettingsTestStatus("正在建立實際 Live 工作階段…");
   try {
-    await checkRequiredModels(next.apiKey);
+    await checkRequiredModels(next.apiKey, { auxiliaryModel: next.auxiliaryModel });
     await probeLiveModel(next.apiKey, {
       voiceName: next.voiceName,
     });
@@ -864,10 +810,18 @@ function readSettingsForm() {
     elements.settingsApiKey.focus();
     return null;
   }
+  const auxiliaryRaw = elements.settingsAuxiliaryModel.value.trim();
+  const auxiliaryModel = auxiliaryRaw ? cleanModelId(auxiliaryRaw) : AUXILIARY_MODEL;
+  if (!auxiliaryModel) {
+    showSettingsTestStatus("輔助模型名稱格式不正確，只能包含英數字、點、底線與連字號。", true);
+    elements.settingsAuxiliaryModel.focus();
+    return null;
+  }
   return {
     ...state.settings,
     apiKey,
     voiceName: elements.settingsVoiceName.value,
+    auxiliaryModel,
     avatarMode: elements.settingsTrueManMode.checked ? "true-man" : "vrm",
     companionSystemPrompt: elements.settingsCompanionPrompt.value,
     companionMemoryEnabled: elements.settingsMemoryEnabled.checked,
@@ -930,6 +884,7 @@ async function endSession(showNotice = true, processMemory = true) {
         transcript,
         memories: state.memories,
         budgetTokens: state.activeMemoryConfig.budgetTokens,
+        model: state.activeMemoryConfig.model,
       });
       state.memories = await saveMemories(result.memories);
       const changes = [];
@@ -1100,7 +1055,9 @@ function createBrowserToolHandlers() {
 
 async function runBrowserTool(call, signal) {
   if (isMutatingBrowserTool(call.name)) {
-    const allowed = await waitForConfirmation(call, signal);
+    const tab = await describeTab(call.args?.tab_id);
+    if (signal.aborted) return { response: { result: "工具已取消。" }, scheduling: "SILENT" };
+    const allowed = await waitForConfirmation(call, signal, tab);
     if (!allowed) return { response: { result: "使用者拒絕或取消了這項操作。" }, scheduling: "SILENT" };
   }
   if (signal.aborted) return { response: { result: "工具已取消。" }, scheduling: "SILENT" };
@@ -1113,9 +1070,19 @@ async function runBrowserTool(call, signal) {
   return { response: response.result || { result: "操作完成。" }, scheduling: "WHEN_IDLE" };
 }
 
-function waitForConfirmation(call, signal) {
+async function describeTab(tabId) {
+  if (tabId == null) return null;
+  try {
+    const tab = await chrome.tabs.get(Number(tabId));
+    return { title: tab.title || "", url: tab.url || "" };
+  } catch {
+    return null;
+  }
+}
+
+function waitForConfirmation(call, signal, tab = null) {
   return new Promise((resolve) => {
-    const request = { call, resolve };
+    const request = { call, tab, resolve };
     pendingConfirmations.set(call.id, request);
     renderConfirmations();
     const abort = () => {
@@ -1152,18 +1119,24 @@ function cancelPendingConfirmations() {
 function renderConfirmations() {
   const requests = [...pendingConfirmations.values()];
   if (requests.length && elements.toolConfirmation.classList.contains("is-hidden")) {
-    for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+    // A modal dialog makes the confirmation card unreachable; close them, but never discard unsaved settings.
+    let settingsOpen = false;
+    for (const dialog of document.querySelectorAll("dialog[open]")) {
+      if (dialog === elements.settingsDialog) settingsOpen = true;
+      else dialog.close();
+    }
+    if (settingsOpen) toast("有瀏覽器操作等待確認，關閉設定後即可處理。");
   }
   elements.toolConfirmation.classList.toggle("is-hidden", requests.length === 0);
   elements.confirmationCount.textContent = `${requests.length} 項`;
   elements.confirmationItems.replaceChildren();
-  for (const { call } of requests) {
+  for (const { call, tab } of requests) {
     const item = document.createElement("article");
     item.className = "confirmation-item";
     const title = document.createElement("strong");
     title.textContent = confirmationTitle(call.name);
     const detail = document.createElement("p");
-    detail.textContent = confirmationDetail(call);
+    detail.textContent = confirmationDetail(call, tab);
     const actions = document.createElement("div");
     actions.className = "confirmation-actions";
     actions.append(
@@ -1196,11 +1169,15 @@ function confirmationTitle(name) {
   })[name] || "確認瀏覽器操作";
 }
 
-function confirmationDetail(call) {
+function confirmationDetail(call, tab = null) {
   const args = call.args || {};
   const values = Object.entries(args)
-    .filter(([key]) => ["url", "title", "filename", "tab_id", "parent_id"].includes(key))
+    .filter(([key]) => ["url", "title", "filename", "tab_id", "parent_id"].includes(key) && !(tab && key === "tab_id"))
     .map(([key, value]) => `${key}：${String(value)}`);
+  if (tab) {
+    values.unshift(`分頁：${tab.title || "未命名分頁"}（tab_id ${args.tab_id}）`);
+    if (tab.url) values.splice(1, 0, `目前網址：${tab.url}`);
+  }
   return values.join("\n") || "PageAsk 想執行一項瀏覽器操作。";
 }
 
@@ -1487,7 +1464,7 @@ function renderSource() {
     elements.sourceWarning.classList.add("is-hidden");
     return;
   }
-  const kindLabels = { "web-selection": "網頁反白", "web-block": "網頁區塊", file: "本機檔案" };
+  const kindLabels = { "web-selection": "網頁反白", "web-block": "網頁區塊", "web-page": "網頁全文", file: "本機檔案" };
   const retainedTokens = Number.isFinite(source.retainedTokens)
     ? source.retainedTokens
     : estimateSourceTokens(source.text);
@@ -1520,10 +1497,10 @@ function renderControls() {
   const controlsLocked = state.started || state.ending || state.memoryProcessing;
   const requiresSource = state.settings.conversationMode === "reading";
   const textOnly = elements.textOnlyMode.checked;
+  elements.pageButton.disabled = state.ending || state.memoryProcessing;
   elements.pickBlockButton.disabled = state.ending || state.memoryProcessing;
   elements.uploadButton.disabled = state.ending || state.memoryProcessing;
   elements.clearSourceButton.disabled = !state.source || state.ending || state.memoryProcessing;
-  elements.podcastButton.disabled = !state.source || state.ending || state.memoryProcessing;
   elements.startButton.disabled = controlsLocked || (requiresSource && !state.source);
   elements.textOnlyMode.disabled = controlsLocked;
   elements.settingsTrueManMode.disabled = controlsLocked || avatarSwitching;

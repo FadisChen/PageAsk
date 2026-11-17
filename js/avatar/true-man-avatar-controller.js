@@ -15,14 +15,10 @@ const BLINK_INTERVALS = { idle: [2, 6], listening: [3, 7], thinking: [2.5, 6], s
 // Eyes jump between gaze photos with a hard cut, like a real saccade; any
 // partial blend of two photos with different gaze shows two irises.
 // Only small (~5°) sideways gaze photos are used: wider aversions and upward
-// looks read as staged on a single frontal photograph. Per state: how long the eyes rest on centre, how
-// long they stay away, and where they go.
-const GAZE_PATTERNS = {
-  idle: { center: [2.5, 6], away: [0.5, 1.2], targets: ["left-soft", "right-soft"] },
-  listening: { center: [3.5, 7], away: [0.3, 0.7], targets: ["left-soft", "right-soft"] },
-  speaking: { center: [2.5, 5.5], away: [0.4, 1], targets: ["left-soft", "right-soft"] },
-  thinking: { center: [0.4, 0.8], away: [1.4, 3], targets: ["left-soft", "right-soft"] },
-};
+// looks read as staged on a single frontal photograph. Eyes only wander while
+// idle; during a conversation (listening, thinking, speaking) they hold on the
+// viewer. How long the eyes rest on centre, how long they stay away, and where they go.
+const IDLE_GAZE = { center: [6, 12], away: [0.5, 1.2], targets: ["left-soft", "right-soft"] };
 
 // Head motion for a single frontal photograph: pixel nods and radian leans
 // around the chest pivot. Hand gestures fall back to a small nod and lean.
@@ -108,7 +104,7 @@ export class TrueManAvatarController {
     this.browCooldownUntil = 0;
     this.grainPattern = null;
     this.gaze = "center";
-    this.nextGazeAt = randomBetween(1, 3);
+    this.nextGazeAt = randomBetween(...IDLE_GAZE.center);
     this.reducedMotion = Boolean(globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
     this.resizeObserver = globalThis.ResizeObserver ? new ResizeObserver(() => this.resize()) : null;
     this.resizeObserver?.observe(canvas);
@@ -165,7 +161,7 @@ export class TrueManAvatarController {
     const next = state || DEFAULT_STATE;
     if (next === this.state) return;
     this.state = next;
-    if (next === "thinking") { this.triggerBlink(); this.nextGazeAt = this.elapsed + randomBetween(0.15, 0.4); }
+    if (next === "thinking") this.triggerBlink();
     if (next === "listening") this.nextListenNodAt = this.elapsed + randomBetween(2, 5);
   }
 
@@ -258,12 +254,17 @@ export class TrueManAvatarController {
 
   updateGaze(isSpeaking) {
     if (this.reducedMotion || this.emotion !== "neutral" || this.emotionMix < 1) { this.setGaze("center"); return; }
+    if (isSpeaking || this.state !== "idle") {
+      // Restart the idle rest period so the eyes don't dart away the moment the conversation ends.
+      this.setGaze("center");
+      this.nextGazeAt = this.elapsed + randomBetween(...IDLE_GAZE.center);
+      return;
+    }
     if (this.elapsed < this.nextGazeAt || !this.images.gaze.size) return;
-    const pattern = GAZE_PATTERNS[isSpeaking ? "speaking" : this.state] || GAZE_PATTERNS.idle;
-    const targets = pattern.targets.filter((name) => this.images.gaze.has(name));
+    const targets = IDLE_GAZE.targets.filter((name) => this.images.gaze.has(name));
     const goAway = this.gaze === "center" && targets.length;
     this.setGaze(goAway ? targets[Math.floor(Math.random() * targets.length)] : "center");
-    const [min, max] = goAway ? pattern.away : pattern.center;
+    const [min, max] = goAway ? IDLE_GAZE.away : IDLE_GAZE.center;
     this.nextGazeAt = this.elapsed + randomBetween(min, max);
   }
 

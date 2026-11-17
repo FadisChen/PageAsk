@@ -32,6 +32,7 @@ export function cleanSettings(value) {
     apiKey: typeof settings.apiKey === "string" ? settings.apiKey.trim() : DEFAULT_SETTINGS.apiKey,
     liveModel: getLiveModelOption(settings.liveModel).id,
     voiceName: VOICES.includes(settings.voiceName) ? settings.voiceName : DEFAULT_SETTINGS.voiceName,
+    auxiliaryModel: cleanModelId(settings.auxiliaryModel, DEFAULT_SETTINGS.auxiliaryModel),
     conversationMode: CONVERSATION_MODES.includes(settings.conversationMode)
       ? settings.conversationMode
       : DEFAULT_SETTINGS.conversationMode,
@@ -53,6 +54,12 @@ export function cleanSettings(value) {
       DEFAULT_SETTINGS.companionMemoryBudgetTokens,
     ),
   };
+}
+
+// Accepts a bare model id or a "models/"-prefixed one; anything that is not a plain id falls back.
+export function cleanModelId(value, fallback = "") {
+  const id = typeof value === "string" ? value.trim().replace(/^models\//, "") : "";
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id) ? id : fallback;
 }
 
 export async function loadSource() {

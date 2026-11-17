@@ -14,7 +14,6 @@ export function getLiveModelOption(id) {
 
 export const GROUNDING_MODEL = "gemini-2.5-flash";
 export const AUXILIARY_MODEL = "gemini-3.5-flash-lite";
-export const PODCAST_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 
 export const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 export const WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
@@ -51,6 +50,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   apiKey: "",
   liveModel: DEFAULT_LIVE_MODEL,
   voiceName: "Kore",
+  auxiliaryModel: AUXILIARY_MODEL,
   conversationMode: "reading",
   avatarMode: DEFAULT_AVATAR_MODE,
   companionSystemPrompt: DEFAULT_COMPANION_SYSTEM_PROMPT,
@@ -72,4 +72,5 @@ export const MESSAGE_TYPES = Object.freeze({
   BLOCK_PICK_CANCELLED: "BLOCK_PICK_CANCELLED",
   SOURCE_UPDATED: "SOURCE_UPDATED",
   EXECUTE_BROWSER_TOOL: "EXECUTE_BROWSER_TOOL",
+  EXTRACT_PAGE: "EXTRACT_PAGE",
 });

@@ -120,13 +120,14 @@ function sanitizeMemoryBoundary(value) {
 
 export async function checkRequiredModels(apiKey, {
   liveModel = DEFAULT_LIVE_MODEL,
+  auxiliaryModel = AUXILIARY_MODEL,
   fetchImpl = fetch,
 } = {}) {
   const selectedLiveModel = getLiveModelOption(liveModel).id;
   const models = [
     { id: selectedLiveModel, requiredMethod: "bidiGenerateContent" },
     { id: GROUNDING_MODEL, requiredMethod: "generateContent" },
-    { id: AUXILIARY_MODEL, requiredMethod: "generateContent" },
+    { id: auxiliaryModel, requiredMethod: "generateContent" },
   ];
   await Promise.all(models.map(async ({ id, requiredMethod }) => {
     const response = await fetchImpl(`${API_BASE}/models/${encodeURIComponent(id)}`, {
@@ -214,6 +215,7 @@ export async function runYoutubeVideoAnalysis(url, {
   apiKey,
   signal,
   fetchImpl = fetch,
+  model = AUXILIARY_MODEL,
 } = {}) {
   if (!String(url || "").trim()) throw new Error("YouTube 影片分析缺少網址。");
   const videoUrl = safeYoutubeUrl(url);
@@ -223,7 +225,7 @@ export async function runYoutubeVideoAnalysis(url, {
   if (Number.isFinite(startOffsetSeconds)) videoMetadata.start_offset = `${Math.max(0, Math.floor(startOffsetSeconds))}s`;
   if (Number.isFinite(endOffsetSeconds)) videoMetadata.end_offset = `${Math.max(0, Math.floor(endOffsetSeconds))}s`;
 
-  const response = await fetchImpl(`${API_BASE}/models/${AUXILIARY_MODEL}:generateContent`, {
+  const response = await fetchImpl(`${API_BASE}/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     signal,
@@ -242,7 +244,7 @@ export async function runYoutubeVideoAnalysis(url, {
     }),
   });
   const data = await readJson(response);
-  if (!response.ok) throw httpErrorFromData(response, data, AUXILIARY_MODEL);
+  if (!response.ok) throw httpErrorFromData(response, data, model);
   const answer = (data?.candidates?.[0]?.content?.parts || [])
     .filter((part) => typeof part.text === "string" && part.thought !== true)
     .map((part) => part.text)
@@ -252,7 +254,7 @@ export async function runYoutubeVideoAnalysis(url, {
   return { answer };
 }
 
-export async function extractMemories(apiKey, transcript, existing = [], fetchImpl = fetch) {
+export async function extractMemories(apiKey, transcript, existing = [], fetchImpl = fetch, model = AUXILIARY_MODEL) {
   if (!Array.isArray(transcript) || !transcript.length) return [];
   const transcriptText = transcript
     .filter((line) => line && (line.role === "user" || line.role === "model") && String(line.text || "").trim())
@@ -286,10 +288,11 @@ ${transcriptText}
     existingMemories,
     ["add", "update", "ignore"],
     fetchImpl,
+    model,
   );
 }
 
-export async function consolidateMemories(apiKey, memories, budgetTokens, fetchImpl = fetch) {
+export async function consolidateMemories(apiKey, memories, budgetTokens, fetchImpl = fetch, model = AUXILIARY_MODEL) {
   if (!Array.isArray(memories) || !memories.length) return [];
   const existingMemories = normalizeMemoryRecords(memories);
   const prompt = `以下是小書僮對使用者的未鎖定長期記憶，總量已超過限制，需要安全濃縮。
@@ -309,6 +312,7 @@ ${existingMemories.map((item) => `- ID=${item.id}｜${item.content}`).join("\n")
     existingMemories,
     ["update", "delete", "ignore"],
     fetchImpl,
+    model,
   );
 }
 
@@ -352,8 +356,8 @@ export function cleanMemoryOperations(values, existing = [], allowedActions = ["
   return operations;
 }
 
-async function generateMemoryOperations(apiKey, prompt, existing, allowedActions, fetchImpl) {
-  const response = await fetchImpl(`${API_BASE}/models/${AUXILIARY_MODEL}:generateContent`, {
+async function generateMemoryOperations(apiKey, prompt, existing, allowedActions, fetchImpl, model = AUXILIARY_MODEL) {
+  const response = await fetchImpl(`${API_BASE}/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
@@ -376,7 +380,7 @@ async function generateMemoryOperations(apiKey, prompt, existing, allowedActions
     }),
   });
   const data = await readJson(response);
-  if (!response.ok) throw httpErrorFromData(response, data, AUXILIARY_MODEL);
+  if (!response.ok) throw httpErrorFromData(response, data, model);
   const text = (data?.candidates?.[0]?.content?.parts || [])
     .filter((part) => typeof part.text === "string" && part.thought !== true)
     .map((part) => part.text)
@@ -791,6 +795,7 @@ export class LiveSession {
         endOffsetSeconds,
         apiKey: this.config.apiKey,
         signal: controller.signal,
+        model: this.config.auxiliaryModel || undefined,
       });
       if (this.stopped || runId !== this.runId || controller.signal.aborted) return;
       this.callbacks.onYoutubeAnalysis?.({ id: call.id, url, question, status: "complete", result });

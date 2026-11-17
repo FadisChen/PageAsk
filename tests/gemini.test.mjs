@@ -662,3 +662,26 @@ test("tool transcript filtering preserves normal response wording at turn comple
   session.handleMessage({ serverContent: { outputTranscription: { text: 'response:search{result:{text:"a } brace"},scheduling:SILENT}Found it.' } } });
   assert.equal(received.at(-1), "Found it.");
 });
+
+test("auxiliary model can be overridden for model checks, YouTube analysis and memory extraction", async () => {
+  const urls = [];
+  await checkRequiredModels("key", {
+    auxiliaryModel: "gemini-custom-1",
+    fetchImpl: async (url) => {
+      urls.push(url);
+      return { ok: true, json: async () => ({ supportedGenerationMethods: ["bidiGenerateContent", "generateContent"] }) };
+    },
+  });
+  assert.ok(urls.some((url) => url.endsWith("/models/gemini-custom-1")));
+  assert.ok(!urls.some((url) => url.endsWith(`/models/${AUXILIARY_MODEL}`)));
+
+  const requested = [];
+  const fetchImpl = async (url) => {
+    requested.push(url);
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: "[]" }] } }] }) };
+  };
+  await runYoutubeVideoAnalysis("https://youtu.be/abc", { apiKey: "key", fetchImpl, model: "gemini-custom-1" }).catch(() => {});
+  await extractMemories("key", [{ role: "user", text: "我喜歡爬山" }], [], fetchImpl, "gemini-custom-1");
+  assert.equal(requested.length, 2);
+  assert.ok(requested.every((url) => url.includes("/models/gemini-custom-1:generateContent")));
+});

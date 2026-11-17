@@ -169,3 +169,16 @@ test("overlong consolidation output is fitted before it can be saved", async () 
   assert.ok(memoryTokens(result.memories) <= 200);
   assert.match(result.warning, /仍超過預算/);
 });
+
+test("the configured auxiliary model is forwarded to extraction", async () => {
+  let received;
+  await processCompanionMemory({
+    apiKey: "key",
+    transcript: [{ role: "user", text: "我喜歡爬山" }],
+    memories: [],
+    budgetTokens: 3000,
+    model: "gemini-custom-1",
+    extractImpl: async (...args) => { received = args; return []; },
+  });
+  assert.equal(received[4], "gemini-custom-1");
+});

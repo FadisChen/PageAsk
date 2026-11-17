@@ -37,9 +37,9 @@
         <span class="source-state" id="sourceState">尚未加入</span>
       </div>
       <div class="source-actions">
+        <button class="button button-secondary" id="pageButton" type="button">使用整頁</button>
         <button class="button button-secondary" id="pickBlockButton" type="button">選取網頁區塊</button>
         <button class="button button-secondary" id="uploadButton" type="button">上傳檔案</button>
-        <button class="button button-secondary" id="podcastButton" type="button" disabled>產生 Podcast</button>
         <button class="button button-secondary" id="clearSourceButton" type="button" disabled>清空來源</button>
         <input id="fileInput" type="file" accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain,text/markdown,text/csv,application/json" hidden>
       </div>
@@ -120,40 +120,6 @@
       <p class="source-warning is-hidden" id="sourceWarning"></p>
     </article>
   </dialog>
-  <dialog class="settings-dialog podcast-dialog" id="podcastDialog" aria-labelledby="podcastDialogTitle">
-    <header class="dialog-header">
-      <div>
-        <p class="eyebrow">READING · PODCAST</p>
-        <h2 id="podcastDialogTitle">產生 Podcast</h2>
-      </div>
-      <button class="dialog-close" id="podcastCloseButton" type="button" aria-label="關閉 Podcast">×</button>
-    </header>
-    <div class="dialog-body">
-      <div class="dialog-field">
-        <label>講稿形式</label>
-        <div class="podcast-format-switch" role="radiogroup" aria-label="講稿形式">
-          <label><input type="radio" name="podcastFormat" id="podcastFormatSolo" value="solo" checked> 單人講述</label>
-          <label><input type="radio" name="podcastFormat" id="podcastFormatDuo" value="duo"> 雙人對談</label>
-        </div>
-      </div>
-      <div class="dialog-field">
-        <label for="podcastVoice1">聲線 1</label>
-        <select id="podcastVoice1"></select>
-      </div>
-      <div class="dialog-field" id="podcastVoice2Field">
-        <label for="podcastVoice2">聲線 2</label>
-        <select id="podcastVoice2"></select>
-      </div>
-      <div class="dialog-test-row">
-        <button class="button button-primary" id="podcastGenerateButton" type="button">產生 Podcast</button>
-        <span class="test-status" id="podcastStatus" role="status"></span>
-      </div>
-      <div class="podcast-result is-hidden" id="podcastResult">
-        <audio id="podcastAudioPlayer" controls></audio>
-        <a class="button button-secondary button-small" id="podcastDownloadLink" download="podcast.wav">下載音檔</a>
-      </div>
-    </div>
-  </dialog>
   <dialog class="settings-dialog transcript-dialog" id="transcriptDialog" aria-labelledby="transcriptDialogTitle">
     <header class="dialog-header"><div><p class="eyebrow">LIVE · TRANSCRIPT</p><h2 id="transcriptDialogTitle">本場逐字稿</h2></div><button class="dialog-close" id="transcriptCloseButton" type="button" aria-label="關閉逐字稿">×</button></header>
     <div class="transcript" id="transcript">
@@ -195,6 +161,12 @@
         <div class="dialog-field">
           <label for="settingsVoiceName">Gemini 原生聲線</label>
           <select id="settingsVoiceName"></select>
+        </div>
+
+        <div class="dialog-field">
+          <label for="settingsAuxiliaryModel">輔助模型</label>
+          <p>用於 YouTube 影片分析與會後記憶整理；留空使用預設值。按「測試並儲存」會確認此模型可用。</p>
+          <input id="settingsAuxiliaryModel" type="text" autocomplete="off" spellcheck="false" placeholder="gemini-3.5-flash-lite">
         </div>
 
         <label class="switch-row" for="settingsTrueManMode">

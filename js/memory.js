@@ -7,6 +7,7 @@ export async function processCompanionMemory({
   transcript,
   memories,
   budgetTokens,
+  model,
   extractImpl = extractMemories,
   consolidateImpl = consolidateMemories,
 }) {
@@ -17,7 +18,7 @@ export async function processCompanionMemory({
 
   const budget = normalizeMemoryBudget(budgetTokens);
   const extractionContext = fitMemoriesToBudget(current, budget).memories;
-  const operations = await extractImpl(apiKey, transcript, extractionContext);
+  const operations = await extractImpl(apiKey, transcript, extractionContext, undefined, model);
   const applied = applyMemoryOperations(current, operations);
   if (!applied.additions && !applied.updates && memoryTokens(current) <= budget) {
     return memoryResult(current);
@@ -45,7 +46,7 @@ export async function processCompanionMemory({
 
   const targetTokens = budget - lockedTokens;
   try {
-    const consolidationOperations = await consolidateImpl(apiKey, unlocked, targetTokens);
+    const consolidationOperations = await consolidateImpl(apiKey, unlocked, targetTokens, undefined, model);
     const consolidated = applyMemoryOperations(next, consolidationOperations, { allowDelete: true });
     next = consolidated.updates || consolidated.deletions ? consolidated.memories : next;
     const beforeFitTokens = memoryTokens(next);

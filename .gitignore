@@ -5,3 +5,4 @@ output/playwright/
 .playwright-cli/
 .playwright-mcp/
 output/imagegen/
+.claude/

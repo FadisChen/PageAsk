@@ -70,3 +70,22 @@ test("closing while microphone permission is pending stops the late stream", asy
     else delete globalThis.AudioContext;
   }
 });
+
+test("only the first chunk of an utterance reports output started", () => {
+  let started = 0;
+  const audio = new BrowserAudioEngine({ onOutputStarted: () => { started += 1; } });
+  audio.context = {
+    currentTime: 0,
+    createBuffer: (_channels, length, rate) => ({ duration: length / rate, getChannelData: () => new Float32Array(length) }),
+    createBufferSource: () => ({ connect() {}, start() {}, stop() {} }),
+    destination: {},
+  };
+  const chunk = new Uint8Array(480);
+  audio.playPcm24k(chunk);
+  audio.playPcm24k(chunk);
+  audio.playPcm24k(chunk);
+  assert.equal(started, 1);
+  audio.flushPlayback();
+  audio.playPcm24k(chunk);
+  assert.equal(started, 2);
+});

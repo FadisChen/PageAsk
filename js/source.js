@@ -5,7 +5,7 @@ import {
 } from "./constants.js";
 import { estimateTokens, isCjkCharacter } from "./storage.js";
 
-const SOURCE_KINDS = new Set(["web-selection", "web-block", "file"]);
+const SOURCE_KINDS = new Set(["web-selection", "web-block", "web-page", "file"]);
 
 export function normalizeSourceText(value) {
   return String(value ?? "")
@@ -86,5 +86,6 @@ function cleanLabel(value) {
 function defaultTitle(kind) {
   if (kind === "web-selection") return "網頁反白文字";
   if (kind === "web-block") return "網頁內容區塊";
+  if (kind === "web-page") return "網頁全文";
   return "上傳檔案";
 }
