@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   getLiveModelOption,
   HISTORY_KEY,
+  LEGACY_COMPANION_SYSTEM_PROMPT,
   MAX_COMPANION_PROMPT_CHARS,
   MAX_HISTORY_ENTRY_CHARS,
   MAX_MEMORY_BUDGET_TOKENS,
@@ -37,11 +38,13 @@ export function cleanSettings(value) {
     avatarMode: AVATAR_MODES.includes(settings.avatarMode)
       ? settings.avatarMode
       : DEFAULT_SETTINGS.avatarMode,
-    companionSystemPrompt: cleanString(
-      settings.companionSystemPrompt,
-      DEFAULT_SETTINGS.companionSystemPrompt,
-      MAX_COMPANION_PROMPT_CHARS,
-    ),
+    companionSystemPrompt: settings.companionSystemPrompt === LEGACY_COMPANION_SYSTEM_PROMPT
+      ? DEFAULT_SETTINGS.companionSystemPrompt
+      : cleanString(
+        settings.companionSystemPrompt,
+        DEFAULT_SETTINGS.companionSystemPrompt,
+        MAX_COMPANION_PROMPT_CHARS,
+      ),
     companionMemoryEnabled: settings.companionMemoryEnabled !== false,
     companionMemoryBudgetTokens: numberInRange(
       settings.companionMemoryBudgetTokens,

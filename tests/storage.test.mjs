@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_COMPANION_SYSTEM_PROMPT,
   DEFAULT_LIVE_MODEL,
+  LEGACY_COMPANION_SYSTEM_PROMPT,
   LIVE_MODEL_OPTIONS,
 } from "../js/constants.js";
 import {
@@ -27,6 +28,16 @@ test("legacy settings receive companion defaults without losing existing values"
   assert.equal(settings.companionSystemPrompt, DEFAULT_COMPANION_SYSTEM_PROMPT);
   assert.equal(settings.companionMemoryEnabled, true);
   assert.equal(settings.companionMemoryBudgetTokens, 3000);
+});
+
+test("the untouched legacy companion prompt upgrades to the Luna default but custom prompts are kept", () => {
+  assert.equal(
+    cleanSettings({ companionSystemPrompt: LEGACY_COMPANION_SYSTEM_PROMPT }).companionSystemPrompt,
+    DEFAULT_COMPANION_SYSTEM_PROMPT,
+  );
+  assert.equal(cleanSettings({ companionSystemPrompt: "自訂人設" }).companionSystemPrompt, "自訂人設");
+  assert.match(DEFAULT_COMPANION_SYSTEM_PROMPT, /Luna/);
+  assert.match(DEFAULT_COMPANION_SYSTEM_PROMPT, /不要主動說出或暗示自己是 AI/);
 });
 
 test("only Gemini 3.8 Live is preserved and unknown values fall back to it", () => {

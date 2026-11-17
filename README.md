@@ -194,7 +194,8 @@ PageAsk/
 ├── avatars/sha.vrm               # 預設 Avatar 資產
 ├── avatars/true-man/              # 真人模式 manifest 與 WebP 圖層
 ├── tools/true-man-harness.html   # 真人 Avatar 本機驗證頁（以 http server 開啟 repo 根目錄）
-├── tools/matte-true-man-base.py  # 將棋盤格底圖離線去背為帶 alpha 的底圖
+├── tools/matte-true-man-base.py  # 將棋盤格底圖離線去背為帶 alpha 的底圖（舊角色用，Luna 底圖已自帶 alpha）
+├── tools/import-luna-true-man.py # 由 Deskmate 的寫實 Luna 建立底圖，並把 Codex 生成圖對位成 1163×1353 全幅 WebP 變體
 ├── scripts/copy-static.mjs       # 複製 manifest、vendor 與資產至 dist
 ├── vite.config.js                # Vite 多 entry build 設定
 ├── tests/                        # Node.js tests
