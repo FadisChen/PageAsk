@@ -30,6 +30,7 @@ export function cleanSettings(value) {
   const settings = value && typeof value === "object" ? value : {};
   return {
     apiKey: typeof settings.apiKey === "string" ? settings.apiKey.trim() : DEFAULT_SETTINGS.apiKey,
+    tavilyApiKey: typeof settings.tavilyApiKey === "string" ? settings.tavilyApiKey.trim() : DEFAULT_SETTINGS.tavilyApiKey,
     liveModel: getLiveModelOption(settings.liveModel).id,
     voiceName: VOICES.includes(settings.voiceName) ? settings.voiceName : DEFAULT_SETTINGS.voiceName,
     auxiliaryModel: cleanModelId(settings.auxiliaryModel, DEFAULT_SETTINGS.auxiliaryModel),

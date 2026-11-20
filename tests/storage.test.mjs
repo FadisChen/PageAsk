@@ -23,6 +23,8 @@ import {
 test("legacy settings receive companion defaults without losing existing values", () => {
   const settings = cleanSettings({ apiKey: " key ", voiceName: "Aoede" });
   assert.equal(settings.apiKey, "key");
+  assert.equal(settings.tavilyApiKey, "");
+  assert.equal(cleanSettings({ tavilyApiKey: " tvly-key " }).tavilyApiKey, "tvly-key");
   assert.equal(settings.liveModel, DEFAULT_LIVE_MODEL);
   assert.equal(settings.voiceName, "Aoede");
   assert.equal(settings.conversationMode, "reading");

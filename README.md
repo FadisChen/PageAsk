@@ -11,12 +11,12 @@ PageAsk 是以 Chrome Manifest V3 Side Panel 為主要工作區的 Gemini Live �
 - 陪伴模式：不需要來源即可開始對談
 - Gemini 3.8 Live 雙向語音、文字輸入、雙方字幕、VAD、插話、session resumption 與重連
 - Side panel 內可切換 VRM 或 AvatarTrueMan 真人 2D Avatar；兩者都支援表情、待機動作與 lip-sync，VRM 另支援骨骼手勢
-- Google Search grounding 與非同步 YouTube 影片分析
+- Tavily 網路搜尋（選填 BYOK）與非同步 YouTube 影片分析
 - 陪伴人格可編輯；長期記憶可新增、編輯、刪除、鎖定與會後整理
 - 對談歷史紀錄：搜尋、展開逐字稿、釘選、刪除與匯出 Markdown
 - 純文字模式：不申請麥克風也能使用 Live 文字輸入與字幕
 - 分享畫面：對談中以 Chrome 原生選擇器分享分頁、視窗或螢幕，每秒送一張 JPEG 給 Live
-- Side panel 內顯示 tool feed、grounding 來源、YouTube 結果與瀏覽器工具結果
+- Side panel 內顯示 tool feed、網路搜尋來源、YouTube 結果與瀏覽器工具結果
 - 瀏覽器工具：分頁、歷史紀錄、書籤、Reading List、下載狀態
 - 會改變瀏覽器狀態的操作一律先顯示確認卡片
 
@@ -29,7 +29,7 @@ Side panel 統一管理語音、字幕、Avatar、來源、設定、歷史紀錄
 - 語音模式使用麥克風與 VAD；啟用「純文字模式」時不會建立麥克風擷取，只使用 Live 文字輸入與字幕。
 - Live session 使用 context window compression（25,000 tokens 觸發、sliding window 目標 8,000 tokens）、session resumption 與 GoAway/斷線重連。
 - 純文字回應若停在明顯未完成的句子，client 會自動要求最多兩次續接；語音模式則維持一般 turn 完成流程。
-- 表情與動作工具只控制角色，不列入工具 feed 或口語回覆；grounding、YouTube 與瀏覽器工具結果才會顯示在工具區。
+- 表情與動作工具只控制角色，不列入工具 feed 或口語回覆；網路搜尋、YouTube 與瀏覽器工具結果才會顯示在工具區。
 - 結束對談時會保存逐字稿歷史；陪伴模式若啟用記憶，會再以輔助模型（預設 `gemini-3.5-flash-lite`，可在設定中修改）整理未鎖定記憶。
 
 ## 系統架構
@@ -47,7 +47,7 @@ flowchart LR
 
 - `sidepanel.js`：主產品介面、Live session、音訊、記憶、工具 feed 與確認 UI
 - `background.js`：執行 Chrome API、開啟 side panel、處理 runtime message
-- `js/gemini.js`：Gemini Live WebSocket、非同步 function calling、grounding、YouTube 與工具回應排程
+- `js/gemini.js`：Gemini Live WebSocket、非同步 function calling、Tavily 網路搜尋、YouTube 與工具回應排程
 - `js/audio.js`：麥克風 AudioWorklet、PCM 音訊輸入、音訊播放與輸出分析器
 - `js/screen-share.js`：getDisplayMedia 畫面擷取、縮圖與 JPEG 影格
 - `js/file-parser.js`：PDF.js 與文字檔解析
@@ -63,7 +63,7 @@ Live client 不直接呼叫 Chrome API。瀏覽器操作集中在 service worker
 
 | Tool | 用途 | 執行方式 |
 | --- | --- | --- |
-| `ground_with_google_search` | 以 Google Search 補充即時來源 | Gemini 2.5 Flash，結果以 `WHEN_IDLE` 回傳 |
+| `search_web` | 以 Tavily 搜尋補充即時來源 | 僅在設定 Tavily API key 時提供；結果以 `WHEN_IDLE` 回傳 |
 | `analyze_youtube_video` | 分析公開 YouTube 影片與指定時間片段 | 輔助模型（預設 Gemini 3.5 Flash-Lite），非同步執行 |
 | `set_avatar_emotion` | 設定 Avatar 情緒 | `NON_BLOCKING`，不阻塞語音 |
 | `play_avatar_gesture` | 播放 Avatar 手勢 | `NON_BLOCKING`，不阻塞語音 |
@@ -83,7 +83,7 @@ Live client 不直接呼叫 Chrome API。瀏覽器操作集中在 service worker
 | --- | --- | --- | --- |
 | Extension | Chrome Manifest V3 | Chrome 120+ | Side Panel、service worker、optional permissions |
 | Live model | `gemini-3.8-live` | 固定 allowlist | 即時雙向語音與文字對談 |
-| Search model | `gemini-2.5-flash` | 固定設定 | Google Search grounding |
+| Search API | Tavily Search | 使用者自備 API key（選填） | 網路搜尋（`search_depth: basic`，每次 1 credit） |
 | Auxiliary model | `gemini-3.5-flash-lite` | 預設值，可在設定表單修改 | YouTube 分析與記憶整理 |
 | 3D | Three.js | `^0.178.0` | WebGL 場景、動畫與音訊視覺化 |
 | VRM | `@pixiv/three-vrm` | `^3.4.0` | 載入與更新 VRM Avatar |
@@ -123,7 +123,7 @@ dist/
 2. 啟用「開發人員模式」。
 3. 點擊「載入未封裝項目」。
 4. 選擇專案下的 `dist/`。
-5. 開啟 PageAsk side panel，在設定中輸入 Gemini API key，使用「測試並儲存」。
+5. 開啟 PageAsk side panel，在設定中輸入 Gemini API key（需要網路搜尋時再填 Tavily API key），使用「測試並儲存」。
 
 修改程式後重新執行 `npm run build`，再回到 `chrome://extensions/` 按下 extension 的重新載入按鈕。
 
@@ -150,12 +150,12 @@ dist/
 
 ## 資料與隱私
 
-- API key 未加密保存在 `chrome.storage.local`，只適合個人裝置使用。
+- Gemini 與 Tavily API key 未加密保存在 `chrome.storage.local`，只適合個人裝置使用。
 - 目前來源保存在 `chrome.storage.session`，Chrome 重啟後會清除。
 - Side panel 隱藏或卸載時，若沒有進行中的對談／記憶整理，暫存來源與當前字幕會清除；歷史、設定與長期記憶不受影響。
 - 陪伴模式長期記憶、歷史紀錄與設定保存在本機 extension storage。
 - 原始檔案會先在瀏覽器本機抽取文字，不會上傳至 Gemini Files API；抽取結果才會送往 Gemini。
-- 字幕、音訊、grounding 工作與 Live session handle 只存在記憶體；逐字稿在使用者結束對談後才用於歷史紀錄與記憶整理。
+- 字幕、音訊、網路搜尋工作與 Live session handle 只存在記憶體；逐字稿在使用者結束對談後才用於歷史紀錄與記憶整理。
 - 瀏覽器 tools 只在使用者授權後啟用；會改變瀏覽器狀態的操作仍需要逐項確認。
 
 ## 專案結構
@@ -224,7 +224,7 @@ npm run build
 - PCM 音訊轉換、AudioWorklet 與文字模式
 - 檔案解析、PDF 頁序、來源大小與 URL 驗證
 - Gemini 3.8 Live setup、VAD、compression、resumption、重連與 `NON_BLOCKING` tools
-- grounding、YouTube、`WHEN_IDLE` function response 與取消流程
+- 網路搜尋、YouTube、`WHEN_IDLE` function response 與取消流程
 - Avatar tools 靜默執行、字幕工具資訊過濾
 - optional permissions、瀏覽器工具安全 URL 與 mutation confirmation
 - history、memory、settings migration、字幕串流合併與繁體中文轉換

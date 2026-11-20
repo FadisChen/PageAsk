@@ -25,6 +25,7 @@ import {
   buildCompanionSystemInstruction,
   buildSystemInstruction,
   checkRequiredModels,
+  checkTavilyKey,
   friendlyApiError,
   LiveSession,
   probeLiveModel,
@@ -124,7 +125,7 @@ const elements = Object.fromEntries([
   "microphoneNotice", "microphonePermissionTitle", "microphonePermissionText", "openMicrophoneSettingsButton",
   "textOnlyMode",
   "settingsDialog", "panelSettingsForm", "settingsCloseButton", "settingsCancelButton",
-  "settingsApiKey", "settingsToggleKeyButton",
+  "settingsApiKey", "settingsToggleKeyButton", "settingsTavilyKey", "settingsToggleTavilyKeyButton",
   "settingsVoiceName", "settingsAuxiliaryModel", "settingsTrueManMode", "settingsTestButton", "settingsTestStatus",
   "settingsCompanionPrompt", "settingsResetPromptButton", "settingsMemoryEnabled", "settingsMemoryBudget",
   "memoryUsage", "newMemoryButton", "newMemoryEditor", "newMemoryContent", "newMemoryLocked",
@@ -202,7 +203,8 @@ elements.historyList.addEventListener("click", handleHistoryListClick);
 elements.historyList.addEventListener("change", handleHistoryListChange);
 elements.settingsCloseButton.addEventListener("click", closeSettings);
 elements.settingsCancelButton.addEventListener("click", closeSettings);
-elements.settingsToggleKeyButton.addEventListener("click", toggleSettingsKey);
+elements.settingsToggleKeyButton.addEventListener("click", () => toggleSecretField(elements.settingsApiKey, elements.settingsToggleKeyButton));
+elements.settingsToggleTavilyKeyButton.addEventListener("click", () => toggleSecretField(elements.settingsTavilyKey, elements.settingsToggleTavilyKeyButton));
 elements.settingsTestButton.addEventListener("click", testAndSaveSettings);
 elements.settingsResetPromptButton.addEventListener("click", () => {
   elements.settingsCompanionPrompt.value = DEFAULT_COMPANION_SYSTEM_PROMPT;
@@ -547,12 +549,15 @@ async function startSession() {
   renderAll();
 
   const initialSource = state.source;
+  const webSearch = Boolean(state.settings.tavilyApiKey);
   const systemInstruction = mode === "companion"
     ? buildCompanionSystemInstruction(
       state.settings.companionSystemPrompt,
       promptMemories.memories.map((memory) => memory.content),
+      new Date(),
+      { webSearch },
     )
-    : buildSystemInstruction(state.source);
+    : buildSystemInstruction(state.source, { webSearch });
   const workspaceInstruction = state.browserToolsGranted ? BROWSER_TOOL_SYSTEM_INSTRUCTION : "";
 
   try {
@@ -567,6 +572,7 @@ async function startSession() {
     if (useMicrophone) renderMicrophonePermission("granted");
     state.session = new LiveSession({
       apiKey: state.settings.apiKey,
+      tavilyApiKey: state.settings.tavilyApiKey,
       liveModel: DEFAULT_LIVE_MODEL,
       voiceName: state.settings.voiceName,
       auxiliaryModel: state.settings.auxiliaryModel,
@@ -581,7 +587,7 @@ async function startSession() {
       onModelTranscript: (text) => { state.transcript.onModel(text); scheduleTranscriptRender(); },
       onInterrupted: () => { state.audio?.flushPlayback(); state.transcript.onInterrupted(); scheduleTranscriptRender(); },
       onTurnComplete: () => { state.transcript.onTurnComplete(); scheduleTranscriptRender(); },
-      onGrounding: handleGroundingEvent,
+      onWebSearch: handleWebSearchEvent,
       onYoutubeAnalysis: handleYoutubeAnalysisEvent,
       onEmotion: (emotion) => {
         avatarController?.setEmotion(emotion);
@@ -610,14 +616,14 @@ async function openSettings() {
   state.settings = await loadSettings();
   state.memories = await loadMemories();
   elements.settingsApiKey.value = state.settings.apiKey;
+  elements.settingsTavilyKey.value = state.settings.tavilyApiKey;
   elements.settingsVoiceName.value = state.settings.voiceName;
   elements.settingsAuxiliaryModel.value = state.settings.auxiliaryModel;
   elements.settingsTrueManMode.checked = state.settings.avatarMode === "true-man";
   elements.settingsCompanionPrompt.value = state.settings.companionSystemPrompt;
   elements.settingsMemoryEnabled.checked = state.settings.companionMemoryEnabled;
   elements.settingsMemoryBudget.value = state.settings.companionMemoryBudgetTokens;
-  elements.settingsApiKey.type = "password";
-  elements.settingsToggleKeyButton.textContent = "顯示";
+  resetSecretFields();
   closeNewMemoryEditor();
   renderMemoryList();
   showSettingsTestStatus("");
@@ -627,8 +633,17 @@ async function openSettings() {
 
 function closeSettings() {
   elements.settingsDialog.close();
-  elements.settingsApiKey.type = "password";
-  elements.settingsToggleKeyButton.textContent = "顯示";
+  resetSecretFields();
+}
+
+function resetSecretFields() {
+  for (const [input, button] of [
+    [elements.settingsApiKey, elements.settingsToggleKeyButton],
+    [elements.settingsTavilyKey, elements.settingsToggleTavilyKeyButton],
+  ]) {
+    input.type = "password";
+    button.textContent = "顯示";
+  }
 }
 
 async function setConversationMode(mode) {
@@ -731,10 +746,10 @@ function memoryBudgetNotice(fitted, successMessage) {
   return successMessage;
 }
 
-function toggleSettingsKey() {
-  const showing = elements.settingsApiKey.type === "text";
-  elements.settingsApiKey.type = showing ? "password" : "text";
-  elements.settingsToggleKeyButton.textContent = showing ? "顯示" : "隱藏";
+function toggleSecretField(input, button) {
+  const showing = input.type === "text";
+  input.type = showing ? "password" : "text";
+  button.textContent = showing ? "顯示" : "隱藏";
 }
 
 async function testAndSaveSettings() {
@@ -747,6 +762,7 @@ async function testAndSaveSettings() {
     await probeLiveModel(next.apiKey, {
       voiceName: next.voiceName,
     });
+    if (next.tavilyApiKey) await checkTavilyKey(next.tavilyApiKey);
     state.settings = await saveSettingsWithAvatar(next);
     showSettingsTestStatus("Live 連線成功，設定已儲存。", false, true);
     if (state.memoryProcessing) return;
@@ -820,6 +836,7 @@ function readSettingsForm() {
   return {
     ...state.settings,
     apiKey,
+    tavilyApiKey: elements.settingsTavilyKey.value.trim(),
     voiceName: elements.settingsVoiceName.value,
     auxiliaryModel,
     avatarMode: elements.settingsTrueManMode.checked ? "true-man" : "vrm",
@@ -1031,8 +1048,8 @@ async function openMicrophoneSettings() {
   }
 }
 
-function handleGroundingEvent(event) {
-  handleToolEvent({ ...event, name: "ground_with_google_search" });
+function handleWebSearchEvent(event) {
+  handleToolEvent({ ...event, name: "search_web" });
 }
 
 function handleYoutubeAnalysisEvent(event) {
@@ -1586,8 +1603,8 @@ function renderTools() {
   for (const event of events) {
     const item = event.name === "analyze_youtube_video"
       ? renderYoutubeToolItem(event)
-      : event.name === "ground_with_google_search"
-        ? renderGroundingToolItem(event)
+      : event.name === "search_web"
+        ? renderWebSearchToolItem(event)
         : renderBrowserToolItem(event);
     elements.toolItems.appendChild(item);
   }
@@ -1629,11 +1646,11 @@ function summarizeToolResult(result) {
   return Object.entries(result).slice(0, 3).map(([key, value]) => `${key}：${String(value)}`).join("；");
 }
 
-function renderGroundingToolItem(event) {
+function renderWebSearchToolItem(event) {
   const item = document.createElement("div");
   item.className = "tool-item";
   const title = document.createElement("strong");
-  title.textContent = event.status === "loading" ? "正在查詢 Google Search…" : event.status === "complete" ? "查詢完成" : "查詢失敗";
+  title.textContent = event.status === "loading" ? "正在搜尋網路…" : event.status === "complete" ? "查詢完成" : "查詢失敗";
   const query = document.createElement("span");
   query.textContent = event.query || event.error || "未提供查詢內容";
   item.append(title, query);

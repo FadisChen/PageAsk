@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   AUXILIARY_MODEL,
   DEFAULT_LIVE_MODEL,
-  GROUNDING_MODEL,
   LIVE_MODEL_OPTIONS,
 } from "../js/constants.js";
 import {
@@ -11,19 +10,20 @@ import {
   buildSystemInstruction,
   buildSourceContext,
   checkRequiredModels,
+  checkTavilyKey,
   cleanMemoryOperations,
   consolidateMemories,
-  createGroundingFunctionResponse,
+  createWebSearchFunctionResponse,
   createYoutubeAnalysisFunctionResponse,
   extractMemories,
   friendlyApiError,
-  GROUNDING_FUNCTION_DECLARATION,
+  WEB_SEARCH_FUNCTION_DECLARATION,
   YOUTUBE_FUNCTION_DECLARATION,
   appearsIncomplete,
   LiveSession,
-  parseGroundingResponse,
+  parseWebSearchResponse,
   probeLiveModel,
-  runGrounding,
+  runWebSearch,
   runYoutubeVideoAnalysis,
   safeYoutubeUrl,
 } from "../js/gemini.js";
@@ -61,11 +61,21 @@ test("updated source text retains untrusted reference boundaries", () => {
   assert.equal((context.match(/<\/reference>/g) || []).length, 1);
 });
 
-test("production model configuration uses Gemini 3.8 Live and the Search compatibility model", () => {
+test("production model configuration uses Gemini 3.8 Live and the auxiliary model", () => {
   assert.equal(DEFAULT_LIVE_MODEL, "gemini-3.8-live");
   assert.deepEqual(LIVE_MODEL_OPTIONS.map((option) => option.id), ["gemini-3.8-live"]);
-  assert.equal(GROUNDING_MODEL, "gemini-2.5-flash");
   assert.equal(AUXILIARY_MODEL, "gemini-3.5-flash-lite");
+});
+
+test("web search rules are added to prompts only when search is enabled", () => {
+  assert.doesNotMatch(buildSystemInstruction(source), /search_web/);
+  assert.doesNotMatch(buildCompanionSystemInstruction("陪伴者", []), /search_web/);
+  const reading = buildSystemInstruction(source, { webSearch: true });
+  assert.match(reading, /search_web/);
+  assert.match(reading, /不可信的第三方網頁內容/);
+  const companion = buildCompanionSystemInstruction("陪伴者", [], new Date(), { webSearch: true });
+  assert.match(companion, /search_web/);
+  assert.match(companion, /不可信的第三方網頁內容/);
 });
 
 test("system instruction scopes reference text as untrusted data", () => {
@@ -179,6 +189,7 @@ test("memory consolidation returns only valid update and delete operations", asy
 test("Gemini 3.8 Live setup enables audio, transcripts, VAD, compression, resumption, and non-blocking tools", () => {
   const session = new LiveSession({
     apiKey: "test",
+    tavilyApiKey: "tvly-test",
     liveModel: LIVE_3_8,
     voiceName: "Aoede",
     systemInstruction: buildSystemInstruction(source),
@@ -199,13 +210,19 @@ test("Gemini 3.8 Live setup enables audio, transcripts, VAD, compression, resump
   assert.equal(setup.tools[0].functionDeclarations.length, 4);
   assert.deepEqual(
     setup.tools[0].functionDeclarations.map((declaration) => declaration.name),
-    [GROUNDING_FUNCTION_DECLARATION.name, YOUTUBE_FUNCTION_DECLARATION.name, "set_avatar_emotion", "play_avatar_gesture"],
+    [WEB_SEARCH_FUNCTION_DECLARATION.name, YOUTUBE_FUNCTION_DECLARATION.name, "set_avatar_emotion", "play_avatar_gesture"],
   );
   assert.equal(setup.tools[0].functionDeclarations[0].behavior, "NON_BLOCKING");
   assert.equal(setup.tools[0].functionDeclarations[1].behavior, "NON_BLOCKING");
   assert.equal(setup.tools[0].functionDeclarations[2].behavior, "NON_BLOCKING");
   assert.equal(setup.tools[0].functionDeclarations[3].behavior, "NON_BLOCKING");
   assert.equal("thinkingConfig" in setup.generationConfig, false);
+});
+
+test("Live setup omits the search tool when no Tavily key is set", () => {
+  const names = new LiveSession({ apiKey: "test", systemInstruction: "測試" })
+    .setupMessage().setup.tools[0].functionDeclarations.map((declaration) => declaration.name);
+  assert.deepEqual(names, [YOUTUBE_FUNCTION_DECLARATION.name, "set_avatar_emotion", "play_avatar_gesture"]);
 });
 
 test("Gemini 3.8 Live setup never sends thinking configuration", () => {
@@ -220,10 +237,10 @@ test("Gemini 3.8 Live setup never sends thinking configuration", () => {
   assert.equal("thinkingLevel" in setup.generationConfig, false);
 });
 
-test("grounding function response waits until the model is idle", () => {
-  assert.equal(GROUNDING_FUNCTION_DECLARATION.name, "ground_with_google_search");
-  const response = createGroundingFunctionResponse(
-    { id: "call-1", name: GROUNDING_FUNCTION_DECLARATION.name },
+test("web search function response waits until the model is idle", () => {
+  assert.equal(WEB_SEARCH_FUNCTION_DECLARATION.name, "search_web");
+  const response = createWebSearchFunctionResponse(
+    { id: "call-1", name: WEB_SEARCH_FUNCTION_DECLARATION.name },
     { answer: "答案", sources: [{ title: "來源", url: "https://example.com/" }] },
   );
   assert.equal(response.response.scheduling, "WHEN_IDLE");
@@ -307,39 +324,96 @@ test("youtube analysis rejects an empty answer", async () => {
   );
 });
 
-test("grounding metadata is converted to unique HTTPS sources", () => {
-  const result = parseGroundingResponse({
-    candidates: [{
-      content: { parts: [{ text: "查詢結果" }] },
-      groundingMetadata: { groundingChunks: [
-        { web: { title: "A", uri: "https://a.example/x" } },
-        { web: { title: "duplicate", uri: "https://a.example/x" } },
-        { web: { title: "unsafe", uri: "http://b.example/" } },
-      ] },
-    }],
+test("Tavily results are converted to unique HTTPS sources with trimmed snippets", () => {
+  const result = parseWebSearchResponse({
+    answer: "查詢結果",
+    results: [
+      { title: "A", url: "https://a.example/x", content: "a".repeat(500) },
+      { title: "duplicate", url: "https://a.example/x", content: "dup" },
+      { title: "unsafe", url: "http://b.example/", content: "http" },
+      { url: "https://c.example/y", content: "c" },
+    ],
   });
   assert.equal(result.answer, "查詢結果");
-  assert.deepEqual(result.sources, [{ title: "A", url: "https://a.example/x" }]);
+  assert.deepEqual(result.sources.map((source) => source.url), ["https://a.example/x", "https://c.example/y"]);
+  assert.equal(result.sources[0].snippet.length, 300);
+  assert.equal(result.sources[1].title, "c.example");
 });
 
-test("grounding request uses Gemini 2.5 Flash and google_search", async () => {
+test("Tavily results without an answer fall back to source snippets", () => {
+  const result = parseWebSearchResponse({ results: [{ title: "A", url: "https://a.example/", content: "摘要內容" }] });
+  assert.equal(result.answer, "摘要內容");
+  assert.equal(parseWebSearchResponse({}).answer, "");
+});
+
+test("web search request uses Tavily with a Bearer token and never the Gemini key", async () => {
   let requestedUrl = "";
+  let requestedOptions;
   let requestedBody;
   const fetchImpl = async (url, options) => {
     requestedUrl = url;
+    requestedOptions = options;
     requestedBody = JSON.parse(options.body);
-    return {
-      ok: true,
-      json: async () => ({ candidates: [{ content: { parts: [{ text: "answer" }] } }] }),
-    };
+    return { ok: true, json: async () => ({ answer: "answer", results: [] }) };
   };
-  const result = await runGrounding("today's fact", { apiKey: "key", fetchImpl });
-  assert.match(requestedUrl, new RegExp(`${GROUNDING_MODEL}:generateContent$`));
-  assert.deepEqual(requestedBody.tools, [{ google_search: {} }]);
+  const result = await runWebSearch("today's fact", {
+    tavilyApiKey: "tvly-key",
+    topic: "news",
+    timeRange: "week",
+    fetchImpl,
+  });
+  assert.equal(requestedUrl, "https://api.tavily.com/search");
+  assert.equal(requestedOptions.method, "POST");
+  assert.equal(requestedOptions.headers.Authorization, "Bearer tvly-key");
+  assert.equal("x-goog-api-key" in requestedOptions.headers, false);
+  assert.equal(requestedUrl.includes("tvly-key"), false);
+  assert.deepEqual(requestedBody, {
+    query: "today's fact",
+    search_depth: "basic",
+    max_results: 5,
+    include_answer: "basic",
+    topic: "news",
+    time_range: "week",
+  });
   assert.equal(result.answer, "answer");
 });
 
-test("model access check requests exactly the Live, Search, and auxiliary models", async () => {
+test("web search ignores unsupported topic and time range values", async () => {
+  let requestedBody;
+  const fetchImpl = async (_url, options) => {
+    requestedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ answer: "answer" }) };
+  };
+  await runWebSearch("q", { tavilyApiKey: "k", topic: "finance", timeRange: "decade", fetchImpl });
+  assert.equal(requestedBody.topic, "general");
+  assert.equal("time_range" in requestedBody, false);
+});
+
+test("Tavily errors keep their own friendly messages", async () => {
+  const failing = (status, data = {}) => async () => ({ ok: false, status, json: async () => data });
+  const unauthorized = await runWebSearch("q", { tavilyApiKey: "bad", fetchImpl: failing(401) }).catch((error) => error);
+  assert.match(friendlyApiError(unauthorized), /Tavily API key 無效/);
+  const exhausted = await runWebSearch("q", { tavilyApiKey: "k", fetchImpl: failing(432) }).catch((error) => error);
+  assert.match(friendlyApiError(exhausted), /Tavily 額度已用完/);
+  const missing = await runWebSearch("q", { tavilyApiKey: "k", fetchImpl: failing(404, { detail: { error: "nope" } }) })
+    .catch((error) => error);
+  assert.match(friendlyApiError(missing), /Tavily 搜尋失敗.*nope/);
+});
+
+test("Tavily key check rejects an invalid key", async () => {
+  let requestedUrl = "";
+  const ok = await checkTavilyKey("tvly-key", {
+    fetchImpl: async (url) => { requestedUrl = url; return { ok: true, json: async () => ({}) }; },
+  });
+  assert.equal(ok, true);
+  assert.equal(requestedUrl, "https://api.tavily.com/usage");
+  await assert.rejects(
+    checkTavilyKey("bad", { fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({}) }) }),
+    /Tavily API key 無效/,
+  );
+});
+
+test("model access check requests exactly the Live and auxiliary models", async () => {
   const urls = [];
   await checkRequiredModels("key", {
     liveModel: LIVE_3_8,
@@ -349,9 +423,8 @@ test("model access check requests exactly the Live, Search, and auxiliary models
       return { ok: true, json: async () => ({ supportedGenerationMethods: [isLive ? "bidiGenerateContent" : "generateContent"] }) };
     },
   });
-  assert.equal(urls.length, 3);
+  assert.equal(urls.length, 2);
   assert.ok(urls.some((url) => url.endsWith(`/models/${LIVE_3_8}`)));
-  assert.ok(urls.some((url) => url.endsWith(`/models/${GROUNDING_MODEL}`)));
   assert.ok(urls.some((url) => url.endsWith(`/models/${AUXILIARY_MODEL}`)));
 });
 

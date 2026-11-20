@@ -12,7 +12,7 @@ test("manifest uses minimum MV3 permissions and local-only extension code", asyn
   assert.equal(manifest.minimum_chrome_version, "120");
   assert.deepEqual(manifest.permissions.sort(), ["activeTab", "contextMenus", "scripting", "sidePanel", "storage", "unlimitedStorage"].sort());
   assert.deepEqual(manifest.optional_permissions.sort(), ["bookmarks", "downloads", "history", "readingList", "tabs"].sort());
-  assert.deepEqual(manifest.host_permissions, ["https://generativelanguage.googleapis.com/*"]);
+  assert.deepEqual(manifest.host_permissions.sort(), ["https://api.tavily.com/*", "https://generativelanguage.googleapis.com/*"].sort());
   assert.deepEqual(manifest.optional_host_permissions.sort(), ["http://*/*", "https://*/*"].sort());
   assert.equal("options_page" in manifest, false);
   assert.equal("content_scripts" in manifest, false);
@@ -37,11 +37,10 @@ test("production source contains only the approved models and no fallback provid
   const source = (await Promise.all(productionFiles.map((file) => readFile(file, "utf8")))).join("\n");
   const modelNames = [...source.matchAll(/gemini-[a-z0-9.-]+/gi)].map((match) => match[0]);
   assert.deepEqual([...new Set(modelNames)].sort(), [
-    "gemini-2.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.8-live",
   ]);
-  assert.doesNotMatch(source, /tavily|googleMaps|<all_urls>/i);
+  assert.doesNotMatch(source, /googleMaps|<all_urls>/i);
 });
 
 test("side panel declares TranscriptCollector before creating state", async () => {

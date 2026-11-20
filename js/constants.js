@@ -12,11 +12,12 @@ export function getLiveModelOption(id) {
     || LIVE_MODEL_OPTIONS.find((option) => option.id === DEFAULT_LIVE_MODEL);
 }
 
-export const GROUNDING_MODEL = "gemini-2.5-flash";
 export const AUXILIARY_MODEL = "gemini-3.5-flash-lite";
 
 export const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 export const WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+
+export const TAVILY_API_BASE = "https://api.tavily.com";
 
 export const SETTINGS_KEY = "pageAskSettings";
 export const SOURCE_KEY = "activeSource";
@@ -48,6 +49,7 @@ export const DEFAULT_COMPANION_SYSTEM_PROMPT = `你是 Luna，一位溫暖、真
 
 export const DEFAULT_SETTINGS = Object.freeze({
   apiKey: "",
+  tavilyApiKey: "",
   liveModel: DEFAULT_LIVE_MODEL,
   voiceName: "Kore",
   auxiliaryModel: AUXILIARY_MODEL,
